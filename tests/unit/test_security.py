@@ -137,12 +137,12 @@ class AbuseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 first_video("Song")
 
-    def test_youtube_quota_fetches_first_video(self):
+    def test_youtube_quota_returns_search_without_verified_metadata(self):
         youtube = YouTube()
         with patch.object(youtube, "_get", side_effect=security.QuotaExceeded()), \
                 patch("linkmusicbot.services.youtube.first_video", return_value="https://www.youtube.com/watch?v=abcdefghijk"):
             self.assertEqual(youtube.song_to_link(Song("Song", "Artist", "Album")),
-                             "https://www.youtube.com/watch?v=abcdefghijk")
+                             "https://www.youtube.com/results?search_query=Song+Artist+topic")
 
     def test_youtube_quota_falls_back_to_search_link(self):
         from linkmusicbot.models import Album
@@ -388,7 +388,7 @@ class AbuseTests(unittest.TestCase):
         with patch.dict("linkmusicbot.bot.secrets", spotify_client_id="test", spotify_client_secret="test"), \
                 patch("linkmusicbot.bot.LocalLibrary"):
             bot = LinkMusicBot("123456:TEST_TOKEN")
-        self.assertEqual(len(bot._music_services), 3)
+        self.assertEqual(len(bot._music_services), 4)
         self.assertEqual(len(bot.application.handlers[0]), 3)
 
     def test_cached_query_does_not_call_services(self):

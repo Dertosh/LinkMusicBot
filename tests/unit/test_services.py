@@ -17,6 +17,39 @@ def schema_page(payload):
     return '<script type="application/ld+json">' + json.dumps(payload) + '</script>'
 
 
+class MatchingRegressionTests(unittest.TestCase):
+    def test_apple_rejects_cover_and_remix(self):
+        for title, artist in [("Song", "Other"), ("Song (Remix)", "Artist")]:
+            with self.subTest(title=title), patch.object(AppleMusic, "_search", return_value={"resultCount": 1, "results": [{"trackName": title, "artistName": artist, "trackViewUrl": "wrong"}]}):
+                with self.assertRaises(ValueError):
+                    AppleMusic().song_to_link(Song("Song", "Artist", "Album"))
+
+    def test_apple_rejects_wrong_album(self):
+        with patch.object(AppleMusic, "_search", return_value={"resultCount": 1, "results": [{"collectionName": "Album", "artistName": "Other"}]}):
+            with self.assertRaises(ValueError):
+                AppleMusic().album_to_link(Album("Album", "Artist"))
+
+    def test_spotify_skips_wrong_first_result(self):
+        service = Spotify.__new__(Spotify)
+        service._spotify = MagicMock()
+        def entry(title, artist, url):
+            return {"name": title, "artists": [{"name": artist}], "album": {"images": []}, "external_urls": {"spotify": url}}
+        service._spotify.search.return_value = {"tracks": {"items": [entry("Song", "Other", "wrong"), entry("Song", "Artist", "correct")]}}
+        self.assertEqual(service.song_to_link(Song("Song", "Artist", "Album")), "correct")
+        service._spotify.search.return_value = {"tracks": {"items": [entry("Song (Remix)", "Artist", "wrong")]}}
+        with self.assertRaises(ValueError):
+            service.song_to_link(Song("Song", "Artist", "Album"))
+
+    def test_youtube_does_not_return_unverified_video(self):
+        with patch.object(YouTube, "_get", return_value={"items": [{"id": {"videoId": "abcdefghijk"}, "snippet": {"title": "Other", "channelTitle": "Artist - Topic"}}]}):
+            self.assertIn("/results?", YouTube().song_to_link(Song("Song", "Artist", "Album")))
+
+    def test_youtube_quota_fallback_does_not_guess(self):
+        with patch.object(YouTube, "_get", side_effect=QuotaExceeded()), patch("linkmusicbot.services.youtube.first_video") as fetch:
+            self.assertIn("/results?", YouTube().song_to_link(Song("Song", "Artist", "Album")))
+            fetch.assert_not_called()
+
+
 class AppleTests(unittest.TestCase):
     def test_original_japanese_track_preferred_over_first_remix(self):
         title, artist = "快眠!安眠!スヤリスト生活", "スヤリス姫 (CV.水瀬いのり)"
@@ -44,7 +77,7 @@ class AppleTests(unittest.TestCase):
             self.assertEqual(self.service.song_to_link(Song("Song", "Artist", "Album")), "original")
 
     def test_empty_japanese_store_retries_us(self):
-        payload = {"resultCount": 1, "results": [{"trackName": "Song", "artistName": "Artist", "trackViewUrl": "found"}]}
+        payload = {"resultCount": 1, "results": [{"trackName": "曲", "artistName": "Artist", "trackViewUrl": "found"}]}
         with patch.object(self.service, "_search", side_effect=[{"resultCount": 0, "results": []}, payload]) as search:
             self.assertEqual(self.service.song_to_link(Song("曲", "Artist", "Album")), "found")
         self.assertEqual(search.call_args.kwargs["country"], "US")
@@ -94,7 +127,7 @@ class AppleTests(unittest.TestCase):
 class SpotifyTests(unittest.TestCase):
     def test_album_conversion_without_cover(self):
         self.service._spotify.search.return_value = {"albums": {"total": 1, "items": [{
-            "images": [], "external_urls": {"spotify": "https://open.spotify.com/album/first"}}]}}
+            "name": "Album", "artists": [{"name": "Artist"}], "images": [], "external_urls": {"spotify": "https://open.spotify.com/album/first"}}]}}
         album = Album("Album", "Artist")
         self.assertEqual(self.service.album_to_link(album), "https://open.spotify.com/album/first")
         self.assertIsNone(album.cover_art)
@@ -121,8 +154,8 @@ class SpotifyTests(unittest.TestCase):
         self.assertEqual(list(self.service.search("unknown")), [])
 
     def test_conversion_uses_first_match_and_handles_missing_cover(self):
-        first = {"external_urls": {"spotify": "https://open.spotify.com/track/first"}, "album": {"images": []}}
-        second = {"external_urls": {"spotify": "https://open.spotify.com/track/second"}, "album": {"images": []}}
+        first = {"name": "Song", "artists": [{"name": "Artist"}], "external_urls": {"spotify": "https://open.spotify.com/track/first"}, "album": {"images": []}}
+        second = {"name": "Other", "artists": [{"name": "Artist"}], "external_urls": {"spotify": "https://open.spotify.com/track/second"}, "album": {"images": []}}
         self.service._spotify.search.return_value = {"tracks": {"total": 2, "items": [first, second]}}
         song = Song("Song", "Artist", "Album")
         self.assertEqual(self.service.song_to_link(song), first["external_urls"]["spotify"])
@@ -168,7 +201,7 @@ class YouTubeTests(unittest.TestCase):
         self.assertEqual(params, {"q": "song"})
 
     def test_direct_video_is_used_without_fetch_fallback(self):
-        payload = {"items": [{"id": {"videoId": "abcdefghijk"}}]}
+        payload = {"items": [{"id": {"videoId": "abcdefghijk"}, "snippet": {"title": "Song", "channelTitle": "Artist - Topic"}}]}
         with patch.object(self.service, "_get", return_value=payload), \
                 patch("linkmusicbot.services.youtube.first_video") as fetch:
             link = self.service.song_to_link(Song("Song", "Artist", "Album"))

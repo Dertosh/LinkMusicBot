@@ -1,5 +1,16 @@
 from ..models import Album, Song
 from urllib.parse import quote, urlencode
+from html import unescape
+import re
+import unicodedata
+
+
+def normalized(value):
+    return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", unescape(value or "")).casefold())
+
+
+def same_recording(item, title, artist):
+    return bool(item.artist) and bool(artist) and normalized(item.title) == normalized(title) and normalized(item.artist) == normalized(artist)
 
 
 def search_links(item, source, link):
@@ -8,6 +19,7 @@ def search_links(item, source, link):
         "Apple Music": "https://music.apple.com/us/search?" + urlencode({"term": term}),
         "Spotify": "https://open.spotify.com/search/" + quote(term, safe=""),
         "YouTube": "https://www.youtube.com/results?" + urlencode({"search_query": term}),
+        "Яндекс Музыка": "https://music.yandex.ru/search?" + urlencode({"text": term}),
     }
     item.service_links[source] = link
     return item

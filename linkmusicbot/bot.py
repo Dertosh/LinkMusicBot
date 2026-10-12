@@ -5,14 +5,17 @@ import os
 from threading import BoundedSemaphore
 from collections import OrderedDict
 
-from telegram import InlineKeyboardButton
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle
 from telegram.ext import Application, CommandHandler, InlineQueryHandler, MessageHandler, filters
 from telegram.error import BadRequest
 
 from .settings import secrets
 from .library import LocalLibrary
 from .presentation import build_result
-from .services import AppleMusic, Spotify, YouTube
+from .services import AppleMusic, Spotify, YouTube, YandexMusic
+from .services.base import search_links
+from .models import Song
+from .about import ATTRIBUTION
 from .security import QueryGuard, check_budget, request_budget, normalize_query
 
 
@@ -22,7 +25,7 @@ class LinkMusicBot:
         return InlineKeyboardButton(name, url=link)
 
     def __init__(self, token):
-        self._music_services = [AppleMusic(), YouTube(), Spotify()]
+        self._music_services = [AppleMusic(), YouTube(), Spotify(), YandexMusic()]
         self.search_service = self._music_services[0]
         self._guard = QueryGuard()
         self._library = LocalLibrary(os.environ.get("MUSIC_CACHE_PATH", "data/music.sqlite3"))
@@ -47,7 +50,11 @@ class LinkMusicBot:
                 if service.can_handle_link(link):
                     rows.append([self.service_button(service.service_name(), link)])
             except Exception:
-                continue
+                fallback = Song(item.title, item.artist, "")
+                search_links(fallback, "", "")
+                link = fallback.service_links.get(service.service_name())
+                if link and service.can_handle_link(link):
+                    rows.append([self.service_button(service.service_name(), link)])
         return build_result(item, rows)
 
     def handle_link(self, link):
@@ -58,7 +65,7 @@ class LinkMusicBot:
 
     def handle_search(self, query):
         services = [self.search_service] + [
-            service for name in ("Spotify", "YouTube")
+            service for name in ("Spotify", "Яндекс Музыка", "YouTube")
             for service in self._music_services
             if service is not self.search_service and service.service_name() == name
         ]
@@ -84,14 +91,15 @@ class LinkMusicBot:
     def _build_results(self, query):
         query = normalize_query(query)
         cached = self._guard.get(query)
-        if cached is not None:
+        if cached is not None and not self._needs_yandex(cached):
             return cached
         library = getattr(self, "_library", None)
         if library is not None:
             cached = library.get(query)
             if cached is not None:
                 self._guard.put(query, cached)
-                return cached
+                if not self._needs_yandex(cached):
+                    return cached
         # Cancellation must not release a slot while its worker still runs.
         if not self._work_slots.acquire(blocking=False):
             return []
@@ -104,7 +112,27 @@ class LinkMusicBot:
     def _convert_and_cache(self, query):
         cached = self._guard.get(query)
         if cached is not None:
-            return cached
+            if not self._needs_yandex(cached):
+                return cached
+            service = next(s for s in self._music_services if isinstance(s, YandexMusic))
+            results = []
+            with request_budget():
+                for result in cached:
+                    if not isinstance(result, InlineQueryResultArticle):
+                        results.append(result)
+                        continue
+                    rows = list(result.reply_markup.inline_keyboard)
+                    if not any(button.text == service.service_name() for row in rows for button in row):
+                        link = service.song_to_link(Song(result.title, result.description or "", ""))
+                        rows.append([self.service_button(service.service_name(), link)])
+                    data = result.to_dict()
+                    data["reply_markup"] = InlineKeyboardMarkup(rows)
+                    results.append(type(result).de_json(data, None))
+            self._guard.put(query, results)
+            library = getattr(self, "_library", None)
+            if library is not None:
+                library.put(query, results)
+            return results
         with request_budget():
             item = self.handle_link(query)
             results = [item] if item is not None else (
@@ -115,6 +143,13 @@ class LinkMusicBot:
         if library is not None:
             library.put(query, results)
         return results
+
+    def _needs_yandex(self, results):
+        if not any(isinstance(service, YandexMusic) for service in getattr(self, "_music_services", [])):
+            return False
+        return any(isinstance(result, InlineQueryResultArticle) and
+                   not any(button.text == "Яндекс Музыка" for row in result.reply_markup.inline_keyboard for button in row)
+                   for result in results)
 
     async def inline_query_handler(self, update, context):
         inline_query = update.inline_query
@@ -135,6 +170,8 @@ class LinkMusicBot:
             cached = self._guard.get(normalize_query(query))
             if cached is None and getattr(self, "_library", None) is not None:
                 cached = self._library.get(normalize_query(query))
+            if cached is not None and self._needs_yandex(cached):
+                cached = None
             if cached is not None:
                 results = cached
             elif not self._guard.allow(user):
@@ -169,6 +206,7 @@ class LinkMusicBot:
                 f"In any chat, type @{username} followed by a song title or track link. "
                 "Choose a result to send its cover and music service buttons."
             )
+        text += "\n\n" + ATTRIBUTION["ru" if language.split("-")[0] == "ru" else "en"]
         await update.effective_message.reply_text(text)
 
     async def error_handler(self, update, context):

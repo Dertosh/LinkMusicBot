@@ -12,7 +12,7 @@ def build_result(item, rows):
     message = f"🎵 {title}\n👤 {description}\n\n🎧 Слушать на платформах ↓"
     thumbnail = None
     if item.cover_art is not None and valid_url(
-        item.cover_art["url"], {"i.scdn.co", "image-cdn-ak.spotifycdn.com"}
+        item.cover_art["url"], {"i.scdn.co", "image-cdn-ak.spotifycdn.com", "avatars.yandex.net", "avatars.mds.yandex.net"}
         | {f"is{i}-ssl.mzstatic.com" for i in range(1, 6)}
     ):
         thumbnail = item.cover_art["url"]

@@ -3,7 +3,7 @@
 - `linkmusicbot/bot.py`: Telegram handlers, debounce, service orchestration and cache lookup.
 - `linkmusicbot/presentation.py`: card text, thumbnails, link previews and button layout.
 - `linkmusicbot/models.py`: songs and albums.
-- `linkmusicbot/services/`: Apple Music, Spotify and YouTube adapters.
+- `linkmusicbot/services/`: Apple Music, Spotify, YouTube and Yandex Music adapters.
 - `linkmusicbot/youtube_fetch.py`: bounded metadata-only yt-dlp search.
 - `linkmusicbot/security.py`: URL validation, HTTP bounds, rate limits and in-memory cache.
 - `linkmusicbot/library.py`: permanent SQLite catalog and query cache.

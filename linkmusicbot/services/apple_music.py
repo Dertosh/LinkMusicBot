@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 from ..models import Album, Song
 from ..security import APPLE_HOSTS, fetch_text, valid_url
-from .base import ServiceHandler
+from .base import ServiceHandler, same_recording
 
 
 class AppleMusic(ServiceHandler):
@@ -74,7 +74,10 @@ class AppleMusic(ServiceHandler):
         )
         if search["resultCount"] < 1:
             raise ValueError("Couldn't find any album results for {!r}.".format(album))
-        return search["results"][0]["collectionViewUrl"]
+        for item in search["results"]:
+            if same_recording(album, item.get("collectionName", ""), item.get("artistName", "")):
+                return item["collectionViewUrl"]
+        raise ValueError("No matching Apple Music album")
 
     def can_handle_link(self, link):
         """Return True if and only if this is an Apple Music link."""
@@ -176,4 +179,8 @@ class AppleMusic(ServiceHandler):
             artist_match = normalized(item.get("artistName", "")) == artist
             return (title_match and artist_match, title_match, artist_match,
                     normalized(item.get("collectionName", "")) == normalized(song.album))
-        return max(search["results"], key=rank)["trackViewUrl"]
+        matches = [item for item in search["results"]
+                   if same_recording(song, item.get("trackName", ""), item.get("artistName", ""))]
+        if not matches:
+            raise ValueError("No matching Apple Music recording")
+        return max(matches, key=rank)["trackViewUrl"]

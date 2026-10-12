@@ -13,6 +13,24 @@ from telegram.error import BadRequest
 
 
 class BotTests(unittest.TestCase):
+    def test_help_contains_upstream_attribution(self):
+        for language in ("ru", "en"):
+            update, context = MagicMock(), MagicMock()
+            update.effective_user.language_code = language
+            update.effective_message.reply_text = AsyncMock()
+            context.bot.username = "SongHubbot"
+            asyncio.run(self.bot.message_handler(update, context))
+            text = update.effective_message.reply_text.call_args.args[0]
+            self.assertIn("@LinkMusicBot", text)
+            self.assertIn("https://github.com/jarhill0/LinkMusicBot", text)
+
+    def test_profile_descriptions_fit_telegram_limits(self):
+        from linkmusicbot.about import DESCRIPTIONS, SHORT_DESCRIPTIONS
+        for text in DESCRIPTIONS.values():
+            self.assertLessEqual(len(text), 512)
+        for text in SHORT_DESCRIPTIONS.values():
+            self.assertLessEqual(len(text), 120)
+
     def setUp(self):
         self.bot = LinkMusicBot.__new__(LinkMusicBot)
         self.bot._guard = QueryGuard()
@@ -72,7 +90,9 @@ class BotTests(unittest.TestCase):
         working.can_handle_link.return_value = True
         self.bot._music_services = [broken, working]
         result = self.bot.make_iqr(Song("Title", "Artist", "Album"))
-        self.assertEqual(result.reply_markup.inline_keyboard[0][0].text, "Spotify")
+        self.assertEqual(result.reply_markup.inline_keyboard[0][0].text, "YouTube")
+        self.assertIn("/results?", result.reply_markup.inline_keyboard[0][0].url)
+        self.assertEqual(result.reply_markup.inline_keyboard[1][0].text, "Spotify")
 
     def test_untrusted_cover_is_not_used_in_preview(self):
         self.bot._music_services = []

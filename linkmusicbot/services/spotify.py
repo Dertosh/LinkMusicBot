@@ -8,7 +8,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from ..settings import secrets
 from ..models import Album, Song
 from ..security import check_budget, valid_url
-from .base import ServiceHandler, search_links
+from .base import ServiceHandler, search_links, same_recording
 
 
 class Spotify(ServiceHandler):
@@ -67,25 +67,21 @@ class Spotify(ServiceHandler):
             raise ValueError("Invalid Spotify ID")
         return match.group(1)
 
-    def album_to_link(self, album):
-        """Convert an Album into a Spotify link.
-
-        Also sets the album cover art, if un-set.
-        """
-        check_budget()
-        search = self._spotify.search(self._format_query(album), type="album")
-        if search["albums"]["total"] < 1:
+    def _matched_link(self, item, kind):
+        for query in (self._format_query(item), self._naive_query(item)):
             check_budget()
-            search = self._spotify.search(self._naive_query(album), type="album")
-            if search["albums"]["total"] < 1:
-                raise ValueError(
-                    "Couldn't find any album results for {!r}.".format(album)
-                )
-        if album.cover_art is None:
-            images = search["albums"]["items"][0].get("images", [])
-            if images:
-                album.cover_art = images[0]
-        return search["albums"]["items"][0]["external_urls"]["spotify"]
+            response = self._spotify.search(query, type=kind, limit=10)
+            for entry in response[kind + "s"]["items"]:
+                artist = " & ".join(a["name"] for a in entry.get("artists", []))
+                if same_recording(item, entry.get("name", ""), artist):
+                    images = (entry.get("album", {}) if kind == "track" else entry).get("images", [])
+                    if item.cover_art is None and images:
+                        item.cover_art = images[0]
+                    return entry["external_urls"]["spotify"]
+        raise ValueError("No matching Spotify recording")
+
+    def album_to_link(self, album):
+        return self._matched_link(album, "album")
 
     def can_handle_link(self, link):
         """Return True if and only if this is a Spotify link."""
@@ -99,30 +95,13 @@ class Spotify(ServiceHandler):
         """Convert a Spotify link into an Album."""
         check_budget()
         album = self._spotify.album(self._validated_id(link, "album"))
-        return Album(album["name"], album["artists"][0]["name"])
+        return Album(album["name"], " & ".join(a["name"] for a in album["artists"]))
 
     def link_to_song(self, link):
         """Convert a Spotify link into a Song."""
         check_budget()
         song = self._spotify.track(self._validated_id(link, "track"))
-        return Song(song["name"], song["artists"][0]["name"], song["album"]["name"])
+        return Song(song["name"], " & ".join(a["name"] for a in song["artists"]), song["album"]["name"])
 
     def song_to_link(self, song):
-        """Convert a Song into a Spotify link.
-
-        Also sets the song cover art, if un-set.
-        """
-        check_budget()
-        search = self._spotify.search(self._format_query(song))
-        if search["tracks"]["total"] < 1:
-            check_budget()
-            search = self._spotify.search(self._naive_query(song))
-            if search["tracks"]["total"] < 1:
-                raise ValueError(
-                    "Couldn't find any song results for {!r}.".format(song)
-                )
-        if song.cover_art is None:
-            images = search["tracks"]["items"][0]["album"].get("images", [])
-            if images:
-                song.cover_art = images[0]
-        return search["tracks"]["items"][0]["external_urls"]["spotify"]
+        return self._matched_link(song, "track")

@@ -18,7 +18,7 @@ _deadline = ContextVar("request_deadline", default=None)
 
 def normalize_query(query):
     query = query.strip()
-    hosts = APPLE_HOSTS | YOUTUBE_HOSTS | {"open.spotify.com"}
+    hosts = APPLE_HOSTS | YOUTUBE_HOSTS | {"open.spotify.com", "music.yandex.ru", "music.yandex.com", "music.yandex.by", "music.yandex.kz"}
     if valid_url(query, hosts):
         parsed = urlparse(query)
         # Preserve semantic selectors (Apple track i, YouTube v/list).

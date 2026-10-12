@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from ..settings import secrets
 from ..models import Album, Song
 from ..security import YOUTUBE_HOSTS, SearchQuota, QuotaExceeded, check_budget, fetch_text, valid_url
-from .base import ServiceHandler, search_links
+from .base import ServiceHandler, search_links, normalized
 from ..youtube_fetch import first_video
 
 
@@ -93,21 +93,7 @@ class YouTube(ServiceHandler):
             return self._search_url(query)
 
     def album_to_link(self, album):
-        """Turn an Album into a YouTube link."""
-        params = {
-            "part": "snippet",
-            "maxResults": 1,
-            "q": self._format_album_query(album),
-            "type": "playlist",
-        }
-        try:
-            response = self._get(self._SEARCH_PATH, params)
-        except QuotaExceeded:
-            return self._search_url(self._format_album_query(album))
-
-        if len(response["items"]) < 1:
-            raise ValueError("Couldn't find any album results for {!r}.".format(album))
-        return self._playlist_link(response["items"][0])
+        return self._search_url(self._format_album_query(album))
 
     def search(self, query, n=2):
         response = self._get(self._SEARCH_PATH, {
@@ -175,18 +161,18 @@ class YouTube(ServiceHandler):
         return Song(title, artist, album)
 
     def song_to_link(self, song):
-        """Turn a Song into a YouTube link."""
-        params = {
-            "part": "snippet",
-            "maxResults": 1,
-            "q": self._format_song_query(song),
-            "type": "video",
-        }
+        query = self._format_song_query(song)
         try:
-            response = self._get(self._SEARCH_PATH, params)
+            response = self._get(self._SEARCH_PATH, {
+                "part": "snippet", "maxResults": 10, "q": query, "type": "video",
+            })
         except QuotaExceeded:
-            return self._quota_fallback(self._format_song_query(song))
-
-        if len(response["items"]) < 1:
-            raise ValueError("Couldn't find any song results for {!r}.".format(song))
-        return self._video_link(response["items"][0])
+            return self._search_url(query)
+        for entry in response.get("items", []):
+            snippet = entry.get("snippet", {})
+            channel = snippet.get("channelTitle", "")
+            if channel.endswith(" - Topic"):
+                channel = channel[:-8]
+                if song.artist and normalized(channel) == normalized(song.artist) and normalized(snippet.get("title")) == normalized(song.title):
+                    return self._video_link(entry)
+        return self._search_url(query)

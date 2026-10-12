@@ -1,5 +1,11 @@
 # LinkMusicBot
 
+This project is a fork of [jarhill0/LinkMusicBot](https://github.com/jarhill0/LinkMusicBot)
+and the original [@LinkMusicBot](https://t.me/LinkMusicBot). The deployed fork is
+[@SongHubbot](https://t.me/SongHubbot). Attribution appears in `/start` and in the
+localized Telegram profile. Update profile text with
+`python -m scripts.configure_bot_profile` using the configured bot credentials.
+
 [@LinkMusicBot](https://t.me/LinkMusicBot) is an inline Telegram
 bot that converts between various music services. To use, type
 @LinkMusicBot into a Telegram chat followed by the link to a song or album.
@@ -24,6 +30,7 @@ linkmusicbot/
     apple_music.py
     spotify.py
     youtube.py
+    yandex_music.py
 scripts/
   build-docker.ps1     # Windows build
   build-docker.sh      # Linux build
@@ -102,7 +109,7 @@ such as `si` and `utm_*` are excluded from cache keys; simultaneous identical
 requests share one conversion. The cache is in memory and resets on restart.
 Inline results use text cards with thumbnails; sent messages request a large
 cover link preview (its rendering depends on Telegram's preview support).
-Title searches try Apple first, then Spotify, then YouTube on empty results or
+Title searches try Apple first, then Spotify, then Yandex Music, then YouTube on empty results or
 service errors. YouTube fallback consumes the configured daily search budget.
 The source button opens the matched item; other buttons resolve the first match
 for its title and artist (YouTube results use the channel name). These additional
@@ -139,6 +146,18 @@ docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-
 ```
 
 ## Usage
+
+### Yandex Music
+
+Supports `/album/<id>/track/<id>`, `/track/<id>` and `/album/<id>` links on
+`music.yandex.ru`, `.com`, `.by` and `.kz`. Public metadata is read without audio
+downloads or account credentials using the unofficial `api.music.yandex.net`
+interface. Search by title falls back to Yandex after Spotify; conversions use
+a matching title and artist (including version names), or a search URL when no
+reliable match exists or the metadata API is unavailable.
+The same permanent local catalog caches Yandex titles, cover art and links.
+The server installer resolves the API hostname through host DNS on each update
+and adds it to the container hosts when available; TLS verification remains enabled.
 
 ### Persistent local search
 
