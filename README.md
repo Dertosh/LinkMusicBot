@@ -13,6 +13,10 @@ to the song or album on different streaming platforms.
 linkmusicbot/
   __main__.py          # python -m linkmusicbot
   bot.py               # Telegram handlers and result conversion
+  presentation.py      # Cards, covers and button layout
+  library.py           # Permanent SQLite catalog and local search
+  settings.py          # Environment and legacy config.py settings
+  youtube_fetch.py     # Bounded yt-dlp metadata search
   models.py            # Song and Album
   security.py          # Safe HTTP, request limits and cache
   services/
@@ -24,7 +28,9 @@ scripts/
   build-docker.ps1     # Windows build
   build-docker.sh      # Linux build
 tests/
-  test_security.py     # Offline regression tests
+  unit/                # Offline unit tests by component
+docs/
+  architecture.md      # Module responsibilities and lookup flow
 config.py.example      # Copy to config.py; never commit real credentials
 requirements.txt       # Direct dependencies
 requirements.lock      # Pinned dependencies and hashes

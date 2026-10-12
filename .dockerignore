@@ -3,6 +3,7 @@
 __pycache__/
 *.py[cod]
 config.py
+config.py.*
 bot.env
 bot.env.*
 .venv/
@@ -11,3 +12,6 @@ venv/
 .vscode/
 tests/
 data/
+.deploy/
+docs/
+*.sqlite3*

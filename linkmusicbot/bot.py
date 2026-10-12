@@ -3,19 +3,17 @@ import logging
 import re
 import os
 from threading import BoundedSemaphore
-from uuid import uuid4
 from collections import OrderedDict
 
-from telegram import (InlineKeyboardButton, InlineKeyboardMarkup,
-                      InlineQueryResultArticle, LinkPreviewOptions,
-                      InputTextMessageContent)
+from telegram import InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, InlineQueryHandler, MessageHandler, filters
 from telegram.error import BadRequest
 
 from .settings import secrets
 from .library import LocalLibrary
+from .presentation import build_result
 from .services import AppleMusic, Spotify, YouTube
-from .security import QueryGuard, check_budget, request_budget, valid_url, normalize_query
+from .security import QueryGuard, check_budget, request_budget, normalize_query
 
 
 class LinkMusicBot:
@@ -50,25 +48,7 @@ class LinkMusicBot:
                     rows.append([self.service_button(service.service_name(), link)])
             except Exception:
                 continue
-        markup = InlineKeyboardMarkup(rows)
-        title = item.title[:256]
-        description = item.artist[:256]
-        message = f"🎵 {title}\n👤 {description}\n\n🎧 Слушать на платформах ↓"
-        thumbnail = None
-        if item.cover_art is not None and valid_url(
-            item.cover_art["url"], {"i.scdn.co", "image-cdn-ak.spotifycdn.com"}
-            | {f"is{i}-ssl.mzstatic.com" for i in range(1, 6)}
-        ):
-            thumbnail = item.cover_art["url"]
-        return InlineQueryResultArticle(
-            id=uuid4().hex, title=title,
-            description=description, thumbnail_url=thumbnail,
-            input_message_content=InputTextMessageContent(
-                message, link_preview_options=LinkPreviewOptions(
-                    url=thumbnail, prefer_large_media=True, show_above_text=True,
-                ) if thumbnail else LinkPreviewOptions(is_disabled=True),
-            ), reply_markup=markup,
-        )
+        return build_result(item, rows)
 
     def handle_link(self, link):
         for service in self._music_services:
