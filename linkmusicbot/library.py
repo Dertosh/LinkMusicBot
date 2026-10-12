@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Lock
 
 from telegram import InlineKeyboardMarkup, InlineQueryResultArticle
+from .search_ranking import rank_results, search_rank
 
 
 def search_text(value):
@@ -20,10 +21,17 @@ class LocalLibrary:
         self.lock = Lock()
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.create_function("search_priority", 2, lambda payload, query:
+                                self._priority(payload, query))
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS queries (query TEXT PRIMARY KEY, payload TEXT, updated REAL);
             CREATE TABLE IF NOT EXISTS tracks (id TEXT PRIMARY KEY, title TEXT, terms TEXT, payload TEXT, updated REAL);
         """)
+
+    @staticmethod
+    def _priority(payload, query):
+        relevance, preferred = search_rank(json.loads(payload)[0]["title"], query)
+        return relevance * 2 + preferred
 
     @staticmethod
     def _decode(payload):
@@ -38,7 +46,7 @@ class LocalLibrary:
             row = self.db.execute("SELECT payload FROM queries WHERE query=? AND updated>?",
                                   (query, time.time() - 7 * 86400)).fetchone()
             if row:
-                return self._decode(row[0])
+                return rank_results(self._decode(row[0]), query)
             if "://" in query:
                 return None
             tokens = search_text(query).split()
@@ -46,8 +54,8 @@ class LocalLibrary:
                 return None
             sql = "SELECT payload FROM tracks WHERE " + " AND ".join(
                 "instr(terms, ?) > 0" for _ in tokens)
-            sql += " ORDER BY (title=?) DESC, updated DESC LIMIT 2"
-            rows = self.db.execute(sql, [*tokens, search_text(query)]).fetchall()
+            sql += " ORDER BY search_priority(payload, ?) DESC, (title=?) DESC, updated DESC LIMIT 2"
+            rows = self.db.execute(sql, [*tokens, query, search_text(query)]).fetchall()
             return [self._decode(row[0])[0] for row in rows] or None
 
     def put(self, query, results):

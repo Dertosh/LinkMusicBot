@@ -8,7 +8,8 @@ from bs4 import BeautifulSoup
 
 from ..models import Album, Song
 from ..security import APPLE_HOSTS, fetch_text, valid_url
-from .base import ServiceHandler, same_recording
+from .base import ServiceHandler, same_recording, normalized
+from ..search_ranking import search_rank
 
 
 class AppleMusic(ServiceHandler):
@@ -137,10 +138,23 @@ class AppleMusic(ServiceHandler):
 
     def search(self, query, n=5):
         """Perform a search with a given query. Returns a list of Song or Album objects."""
+        country = "JP" if re.search(r"[\u3040-\u30ff\u3400-\u9fff]", query) else "US"
         search = self._search(
-            query, media="music", entity="song,album", explicit=True, limit=n
+            query, country=country, media="music", entity="song", explicit=True,
+            limit=max(20, n)
         )
-        for item in search["results"]:
+        if not search.get("results") and country != "US":
+            search = self._search(query, country="US", media="music", entity="song",
+                                  explicit=True, limit=max(20, n))
+        def rank(item):
+            return search_rank(item.get("trackName", ""), query)
+        seen = set()
+        count = 0
+        for item in sorted(search["results"], key=rank, reverse=True):
+            identity = (normalized(item.get("trackName", "")), normalized(item.get("artistName", "")))
+            if identity in seen:
+                continue
+            seen.add(identity)
             wrapper_type = item.get("wrapperType")
             if wrapper_type == "track":
                 result = Song(
@@ -159,6 +173,9 @@ class AppleMusic(ServiceHandler):
             if item.get("artworkUrl100"):
                 result.cover_art = {"url": self._large_artwork(item["artworkUrl100"])}
             yield result
+            count += 1
+            if count >= n:
+                break
 
     def song_to_link(self, song):
         """Turn a Song into an Apple Music link."""

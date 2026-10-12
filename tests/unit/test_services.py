@@ -11,6 +11,7 @@ from linkmusicbot.services import AppleMusic, Spotify, YouTube
 from linkmusicbot.security import QuotaExceeded, SearchQuota
 from linkmusicbot.youtube_fetch import first_video
 from requests.exceptions import HTTPError
+from linkmusicbot.services.base import same_recording, recording_query
 
 
 def schema_page(payload):
@@ -18,6 +19,20 @@ def schema_page(payload):
 
 
 class MatchingRegressionTests(unittest.TestCase):
+    def test_feature_credit_matches_collaborating_artists(self):
+        song = Song("Я не вернусь (feat. Kyle Kujira)", "Снежа", "Single")
+        self.assertEqual(recording_query(song), "Я не вернусь Снежа Kyle Kujira")
+        self.assertTrue(same_recording(song, "Я не вернусь", "Снежа & Kyle Kujira"))
+        self.assertTrue(same_recording(song, "Я не вернусь", "Kyle Kujira & Снежа"))
+        self.assertFalse(same_recording(song, "Я не вернусь", "Снежа"))
+        self.assertFalse(same_recording(song, "Я не вернусь (Remix)", "Снежа & Kyle Kujira"))
+        self.assertFalse(same_recording(song, "Я не вернусь", "ВИА Гра"))
+
+    def test_apple_text_search_requests_songs(self):
+        with patch.object(AppleMusic, "_search", return_value={"results": []}) as search:
+            list(AppleMusic().search("я не вернусь Снежа", n=2))
+        self.assertEqual(search.call_args.kwargs["entity"], "song")
+
     def test_apple_rejects_cover_and_remix(self):
         for title, artist in [("Song", "Other"), ("Song (Remix)", "Artist")]:
             with self.subTest(title=title), patch.object(AppleMusic, "_search", return_value={"resultCount": 1, "results": [{"trackName": title, "artistName": artist, "trackViewUrl": "wrong"}]}):
@@ -51,6 +66,36 @@ class MatchingRegressionTests(unittest.TestCase):
 
 
 class AppleTests(unittest.TestCase):
+    def test_the_sun_exact_title_beats_partial_titles(self):
+        def entry(title, artist, url):
+            return {"wrapperType": "track", "trackName": title, "artistName": artist,
+                    "collectionName": "Album", "trackViewUrl": url}
+        payload = {"results": [entry("A Chapter in the Sun", "Other", "partial"),
+                               entry("The Sun (Live)", "Maroon 5", "live"),
+                               entry("The Sun", "Maroon 5", "original")]}
+        with patch.object(self.service, "_search", return_value=payload):
+            items = list(self.service.search("The Sun Maroon 5", n=2))
+        self.assertEqual(items[0].service_links["Apple Music"], "original")
+
+    def test_japanese_search_original_first_with_distinct_remix_link(self):
+        title = "快眠!安眠!スヤリスト生活"
+        def entry(suffix, url):
+            return {"wrapperType": "track", "trackName": title + suffix,
+                    "artistName": "Artist", "collectionName": "Album", "trackViewUrl": url}
+        payload = {"results": [entry(" (DC Mizey Remix)", "remix"), entry("", "original"),
+                               entry("", "duplicate"), entry(" (TV Size)", "tv"),
+                               {"wrapperType": "track", "trackName": "安眠", "artistName": "Other",
+                                "collectionName": "Other", "trackViewUrl": "unrelated"}]}
+        with patch.object(self.service, "_search", return_value=payload) as search:
+            items = list(self.service.search(title, n=2))
+        self.assertEqual(search.call_args.kwargs["country"], "JP")
+        self.assertGreaterEqual(search.call_args.kwargs["limit"], 20)
+        self.assertEqual([s.service_links["Apple Music"] for s in items], ["original", "remix"])
+        self.assertEqual(items[1].title, title + " (DC Mizey Remix)")
+        with patch.object(self.service, "_search", return_value=payload):
+            items = list(self.service.search(title + " Remix", n=2))
+        self.assertEqual(items[0].service_links["Apple Music"], "remix")
+
     def test_original_japanese_track_preferred_over_first_remix(self):
         title, artist = "快眠!安眠!スヤリスト生活", "スヤリス姫 (CV.水瀬いのり)"
         payload = {"resultCount": 3, "results": [
@@ -169,6 +214,24 @@ class SpotifyTests(unittest.TestCase):
 
 
 class YouTubeTests(unittest.TestCase):
+    def test_official_lyrics_link_preserves_source(self):
+        url = "https://www.youtube.com/watch?v=OL1lo6zBGbM"
+        payload = {"items": [{"snippet": {"title": "STEFAN - Miraaž (Official Lyrics video)", "channelTitle": "STEFAN"}}]}
+        with patch.object(self.service, "_get", return_value=payload):
+            song = self.service.link_to_song(url)
+        self.assertEqual((song.title, song.artist), ("Miraaž", "STEFAN"))
+        self.assertEqual(song.service_links["YouTube"], url)
+
+    def test_official_video_search_matches_exact_song_and_version(self):
+        payload = {"items": [{"id": {"videoId": "OL1lo6zBGbM"}, "snippet": {
+            "title": "STEFAN - Miraaž (Official Lyrics video)", "channelTitle": "STEFAN"}}]}
+        with patch.object(self.service, "_get", return_value=payload):
+            self.assertIn("OL1lo6zBGbM", self.service.song_to_link(Song("Miraaž", "Stefan", "")))
+            self.assertIn("/results?", self.service.song_to_link(Song("Miraaž (Remix)", "Stefan", "")))
+
+    def test_unrelated_channel_cannot_establish_song_artist(self):
+        self.assertIsNone(self.service._snippet_song({"title": "STEFAN - Miraaž (Official Lyrics video)", "channelTitle": "Other"}))
+
     def setUp(self):
         self.service = YouTube()
 

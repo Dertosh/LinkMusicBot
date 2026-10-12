@@ -9,6 +9,7 @@ from threading import Lock
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import requests
+from .text_encoding import repair_text
 
 APPLE_HOSTS = {"itunes.apple.com", "music.apple.com"}
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
@@ -17,7 +18,7 @@ _deadline = ContextVar("request_deadline", default=None)
 
 
 def normalize_query(query):
-    query = query.strip()
+    query = repair_text(query.strip())
     hosts = APPLE_HOSTS | YOUTUBE_HOSTS | {"open.spotify.com", "music.yandex.ru", "music.yandex.com", "music.yandex.by", "music.yandex.kz"}
     if valid_url(query, hosts):
         parsed = urlparse(query)
@@ -92,7 +93,9 @@ def fetch_text(url, hosts, params=None):
                     data.extend(chunk)
                     if len(data) > MAX_BYTES:
                         raise ValueError("Response too large")
-                return data.decode(response.encoding or "utf-8", errors="replace")
+                content_type = response.headers.get("Content-Type", "")
+                encoding = response.encoding if "charset=" in content_type.lower() else "utf-8"
+                return data.decode(encoding or "utf-8", errors="replace")
         raise ValueError("Too many redirects")
 
 

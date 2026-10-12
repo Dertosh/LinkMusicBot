@@ -7,7 +7,7 @@ from urllib.parse import urlencode, urlparse
 
 from ..models import Album, Song
 from ..security import check_budget, fetch_text, valid_url, normalize_query
-from .base import ServiceHandler, search_links
+from .base import ServiceHandler, search_links, same_recording, recording_query
 
 YANDEX_HOSTS = {"music.yandex.ru", "music.yandex.com", "music.yandex.by", "music.yandex.kz"}
 
@@ -113,12 +113,10 @@ class YandexMusic(ServiceHandler):
         return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", value).casefold())
 
     def _same_item(self, expected, actual):
-        return (self._normalized(expected.title) == self._normalized(actual.title)
-                and bool(expected.artist) and bool(actual.artist)
-                and self._normalized(expected.artist) == self._normalized(actual.artist))
+        return same_recording(expected, actual.title, actual.artist)
 
     def song_to_link(self, song):
-        term = f"{song.title} {song.artist}"
+        term = recording_query(song)
         try:
             matches = [match for match in self.search(term, n=20) if self._same_item(song, match)]
             if matches:

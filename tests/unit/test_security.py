@@ -25,6 +25,22 @@ def response(url, status=200, chunks=(b"hello",), headers=None):
 
 
 class HTTPTests(unittest.TestCase):
+    def test_utf8_music_metadata_without_charset_ignores_latin1_default(self):
+        for text in ["Miraaž", "Beyoncé", "Она не твоя", "快眠!安眠!スヤリスト生活"]:
+            with self.subTest(text=text):
+                reply = response("https://music.apple.com/", chunks=(text.encode("utf8"),),
+                                 headers={"Content-Type": "text/html"})
+                reply.encoding = "ISO-8859-1"
+                self.session.get.return_value = reply
+                self.assertEqual(security.fetch_text(reply.url, security.APPLE_HOSTS), text)
+
+    def test_explicit_http_charset_is_respected(self):
+        reply = response("https://music.apple.com/", chunks=("Beyoncé".encode("latin1"),),
+                         headers={"Content-Type": "text/html; charset=iso-8859-1"})
+        reply.encoding = "iso-8859-1"
+        self.session.get.return_value = reply
+        self.assertEqual(security.fetch_text(reply.url, security.APPLE_HOSTS), "Beyoncé")
+
     def setUp(self):
         self.session_patch = patch("linkmusicbot.security.requests.Session")
         self.session = self.session_patch.start().return_value.__enter__.return_value
@@ -207,16 +223,18 @@ class AbuseTests(unittest.TestCase):
             apple.search.return_value = []
             if apple_error:
                 apple.search.side_effect = ValueError("unavailable")
-            spotify.search.return_value = ["spotify item"]
-            youtube.search.return_value = ["youtube item"]
+            spotify_item = Song("spotify item", "Artist", "Album")
+            youtube_item = Song("youtube item", "Artist", "Album")
+            spotify.search.return_value = [spotify_item]
+            youtube.search.return_value = [youtube_item]
             bot.search_service = apple
             bot._music_services = [apple, youtube, spotify]
             bot.make_iqr = MagicMock(side_effect=lambda item: item)
             with patch("linkmusicbot.bot.logging.warning"):
-                self.assertEqual(bot.handle_search("song"), ["spotify item"])
+                self.assertEqual(bot.handle_search("song"), [spotify_item])
                 youtube.search.assert_not_called()
                 spotify.search.return_value = []
-                self.assertEqual(bot.handle_search("song"), ["youtube item"])
+                self.assertEqual(bot.handle_search("song"), [youtube_item])
                 youtube.search.return_value = []
                 self.assertEqual(bot.handle_search("song"), [])
 

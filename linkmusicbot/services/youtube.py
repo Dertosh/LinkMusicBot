@@ -1,5 +1,6 @@
 from json import loads
 from html import unescape
+import re
 from urllib.parse import parse_qs, urlparse, urlencode
 from requests.exceptions import HTTPError
 
@@ -8,7 +9,7 @@ from bs4 import BeautifulSoup
 from ..settings import secrets
 from ..models import Album, Song
 from ..security import YOUTUBE_HOSTS, SearchQuota, QuotaExceeded, check_budget, fetch_text, valid_url
-from .base import ServiceHandler, search_links, normalized
+from .base import ServiceHandler, search_links, normalized, same_recording
 from ..youtube_fetch import first_video
 
 
@@ -139,6 +140,20 @@ class YouTube(ServiceHandler):
 
     def link_to_song(self, link):
         """Turn a YouTube link into a Song."""
+        if not self.can_handle_link(link):
+            raise ValueError("Invalid YouTube URL")
+        parsed = urlparse(link)
+        identifier = (parsed.path.strip("/") if parsed.hostname == "youtu.be"
+                      else parse_qs(parsed.query).get("v", [""])[0])
+        if not re.fullmatch(r"[A-Za-z0-9_-]{11}", identifier):
+            raise ValueError("Invalid YouTube video ID")
+        response = self._get("https://www.googleapis.com/youtube/v3/videos",
+                             {"part": "snippet", "id": identifier})
+        for entry in response.get("items", []):
+            song = self._snippet_song(entry.get("snippet", {}))
+            if song is not None:
+                song.service_links = {self.service_name(): link}
+                return song
         # Unfortunately, this info is NOT provided by the API, so... we're doing more webscraping!
         page = BeautifulSoup(
             fetch_text(link, YOUTUBE_HOSTS), "html.parser"
@@ -160,6 +175,19 @@ class YouTube(ServiceHandler):
 
         return Song(title, artist, album)
 
+    @staticmethod
+    def _snippet_song(snippet):
+        title = unescape(snippet.get("title", ""))
+        channel = unescape(snippet.get("channelTitle", ""))
+        if channel.endswith(" - Topic"):
+            return Song(title, channel[:-8], "") if title else None
+        title = re.sub(r"\s*[\(\[]official\s+(?:(?:lyrics?|music)\s+)?(?:video|audio)[\)\]]\s*$",
+                       "", title, flags=re.I)
+        parts = re.split(r"\s+[-–—]\s+", title, maxsplit=1)
+        if len(parts) == 2 and channel and normalized(parts[0]) == normalized(channel):
+            return Song(parts[1], parts[0], "")
+        return None
+
     def song_to_link(self, song):
         query = self._format_song_query(song)
         try:
@@ -169,10 +197,7 @@ class YouTube(ServiceHandler):
         except QuotaExceeded:
             return self._search_url(query)
         for entry in response.get("items", []):
-            snippet = entry.get("snippet", {})
-            channel = snippet.get("channelTitle", "")
-            if channel.endswith(" - Topic"):
-                channel = channel[:-8]
-                if song.artist and normalized(channel) == normalized(song.artist) and normalized(snippet.get("title")) == normalized(song.title):
-                    return self._video_link(entry)
+            candidate = self._snippet_song(entry.get("snippet", {}))
+            if candidate and same_recording(song, candidate.title, candidate.artist):
+                return self._video_link(entry)
         return self._search_url(query)

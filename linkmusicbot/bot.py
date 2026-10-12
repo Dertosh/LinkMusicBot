@@ -15,6 +15,7 @@ from .presentation import build_result
 from .services import AppleMusic, Spotify, YouTube, YandexMusic
 from .services.base import search_links
 from .models import Song
+from .search_ranking import rank_results
 from .about import ATTRIBUTION
 from .security import QueryGuard, check_budget, request_budget, normalize_query
 
@@ -64,6 +65,7 @@ class LinkMusicBot:
         return None
 
     def handle_search(self, query):
+        query = normalize_query(query)
         services = [self.search_service] + [
             service for name in ("Spotify", "Яндекс Музыка", "YouTube")
             for service in self._music_services
@@ -72,13 +74,13 @@ class LinkMusicBot:
         for service in services:
             check_budget()
             try:
-                items = list(service.search(query, n=2))
+                items = rank_results(list(service.search(query, n=10)), query)[:2]
             except Exception as error:
                 logging.warning("%s search failed: %s", service.service_name(), type(error).__name__)
                 continue
             if items:
                 for item in items:
-                    # Keep the source track; resolve other platforms to their first match.
+                    # Keep the source track; verify matches on other platforms.
                     if hasattr(item, "service_links"):
                         source = service.service_name()
                         item.service_links = {

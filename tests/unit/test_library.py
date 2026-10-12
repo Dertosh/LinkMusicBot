@@ -20,6 +20,26 @@ def track(title="The Sun", artist="Maroon 5", link="https://youtube.com/watch?v=
 
 
 class LibraryTests(unittest.TestCase):
+    def test_original_precedes_recent_versions_in_local_search(self):
+        self.library.put("original", [track("Song", "Artist")])
+        for title in ["Song (Remix)", "Song (Live)", "Song (Acoustic)"]:
+            self.library.put(title, [track(title, "Artist")])
+        self.assertEqual(self.library.get("song artist")[0].title, "Song")
+        self.assertEqual(self.library.get("song artist remix")[0].title, "Song (Remix)")
+
+    def test_feature_credit_does_not_demote_original(self):
+        self.library.put("original", [track("Song (feat. Guest)", "Artist")])
+        self.library.put("remix", [track("Song (Remix)", "Artist")])
+        self.assertEqual(self.library.get("song artist")[0].title, "Song (feat. Guest)")
+
+    def test_old_cached_order_is_ranked_without_changing_links(self):
+        remix = track("Song (Remix)", "Artist", "https://youtube.com/watch?v=remix")
+        original = track("Song", "Artist", "https://youtube.com/watch?v=original")
+        self.library.put("song artist", [remix, original])
+        results = self.library.get("song artist")
+        self.assertEqual(results[0].to_dict(), original.to_dict())
+        self.assertEqual(results[1].to_dict(), remix.to_dict())
+
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)

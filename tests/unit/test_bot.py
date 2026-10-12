@@ -13,6 +13,43 @@ from telegram.error import BadRequest
 
 
 class BotTests(unittest.TestCase):
+    def test_all_search_services_prioritize_original_beyond_first_two(self):
+        for name in ["Apple Music", "Spotify", "YouTube", "Яндекс Музыка"]:
+            with self.subTest(service=name):
+                service = MagicMock()
+                service.service_name.return_value = name
+                songs = [Song("Song (Remix)", "Artist", "Album"),
+                         Song("Song (Live)", "Artist", "Album"), Song("Song", "Artist", "Album")]
+                service.search.return_value = songs
+                self.bot.search_service = service
+                self.bot._music_services = [service]
+                self.bot.make_iqr = lambda item: item
+                results = self.bot.handle_search("Song Artist")
+                self.assertEqual(results[0].title, "Song")
+                service.search.assert_called_with("song artist", n=10)
+                results = self.bot.handle_search("Song Artist Remix")
+                self.assertEqual(results[0].title, "Song (Remix)")
+
+    def test_selected_variant_keeps_its_message_and_service_link(self):
+        service = MagicMock()
+        service.service_name.return_value = "Apple Music"
+        service.can_handle_link.return_value = True
+        original = Song("Song", "Artist", "Album")
+        remix = Song("Song (Remix)", "Artist", "Album")
+        original.service_links = {"Apple Music": "https://music.apple.com/jp/song/original/1"}
+        remix.service_links = {"Apple Music": "https://music.apple.com/jp/song/remix/2"}
+        service.search.return_value = [original, remix]
+        self.bot.search_service = service
+        self.bot._music_services = [service]
+        results = self.bot.handle_search("Song")
+        self.assertNotEqual(results[0].id, results[1].id)
+        for result, item in zip(results, [original, remix]):
+            self.assertEqual(result.title, item.title)
+            self.assertIn(item.title, result.input_message_content.message_text)
+            self.assertEqual(result.reply_markup.inline_keyboard[0][0].url,
+                             item.service_links["Apple Music"])
+        service.object_to_link.assert_not_called()
+
     def test_help_contains_upstream_attribution(self):
         for language in ("ru", "en"):
             update, context = MagicMock(), MagicMock()
