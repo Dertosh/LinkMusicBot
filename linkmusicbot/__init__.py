@@ -1,0 +1,1 @@
+"""LinkMusicBot application package."""

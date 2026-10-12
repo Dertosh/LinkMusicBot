@@ -1,3 +1,47 @@
+# Local credentials (keep examples under version control)
+/config.py
+bot.env
+.env
+.env.*
+!.env.example
+!.env.*.example
+.cache*
+
+# Python bytecode and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Tool caches and test reports
+.uv-cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Build artifacts
+.deploy/
+build/
+dist/
+*.egg-info/
+
+# Local editor and operating system files
 .idea/
+.vscode/
 .DS_Store
-config.py
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# Runtime logs
+data/
+*.log

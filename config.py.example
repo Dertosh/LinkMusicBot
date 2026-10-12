@@ -5,4 +5,6 @@ secrets = {
     "spotify_client_secret": "",
     "telegram_token": "",
     "youtube_token": "",
+    # 0 means unlimited locally; provider quotas still apply.
+    "youtube_search_limit": 100,
 }

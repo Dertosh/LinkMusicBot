@@ -1,0 +1,13 @@
+.git
+.gitignore
+__pycache__/
+*.py[cod]
+config.py
+bot.env
+bot.env.*
+.venv/
+venv/
+.uv-cache/
+.vscode/
+tests/
+data/
