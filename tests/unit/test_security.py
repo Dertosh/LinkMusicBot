@@ -129,7 +129,7 @@ class AbuseTests(unittest.TestCase):
                 self.assertIsNone(reopened.get("unknown track"))
                 with patch("linkmusicbot.library.time.time", return_value=4102444800):
                     self.assertEqual(reopened.get("demons shot")[0].title, "DEMON'S SHOT")
-                    self.assertIsNone(reopened.get("https://music.apple.com/us/song/x/123"))
+                    self.assertTrue(reopened.needs_refresh("https://music.apple.com/us/song/x/123"))
                 bot = LinkMusicBot.__new__(LinkMusicBot)
                 bot._guard = security.QueryGuard()
                 bot._library = reopened
@@ -187,6 +187,15 @@ class AbuseTests(unittest.TestCase):
         self.assertEqual(settings["telegram_token"], "test-env-token")
         self.assertEqual(settings["youtube_search_limit"], 25)
 
+    def test_cache_and_inline_settings_are_configurable(self):
+        from linkmusicbot.settings import load_settings
+        with patch.dict("os.environ", {"MUSIC_CACHE_REFRESH_SECONDS": "21600",
+                                       "INLINE_RESULT_LIMIT": "20", "INLINE_DEBOUNCE_MS": "800"}):
+            settings = load_settings()
+        self.assertEqual(settings["cache_refresh_seconds"], 21600)
+        self.assertEqual(settings["inline_result_limit"], 20)
+        self.assertEqual(settings["inline_debounce_ms"], 800)
+
     def test_apple_artwork_uses_large_image(self):
         url = "https://is1-ssl.mzstatic.com/image/thumb/Music/cover.jpg/100x100bb.jpg"
         self.assertEqual(AppleMusic._large_artwork(url), url.replace("100x100", "600x600"))
@@ -223,16 +232,16 @@ class AbuseTests(unittest.TestCase):
             apple.search.return_value = []
             if apple_error:
                 apple.search.side_effect = ValueError("unavailable")
-            spotify_item = Song("spotify item", "Artist", "Album")
-            youtube_item = Song("youtube item", "Artist", "Album")
+            spotify_item = Song("Song Spotify", "Artist", "Album")
+            youtube_item = Song("Song YouTube", "Artist", "Album")
             spotify.search.return_value = [spotify_item]
             youtube.search.return_value = [youtube_item]
             bot.search_service = apple
             bot._music_services = [apple, youtube, spotify]
             bot.make_iqr = MagicMock(side_effect=lambda item: item)
             with patch("linkmusicbot.bot.logging.warning"):
-                self.assertEqual(bot.handle_search("song"), [spotify_item])
-                youtube.search.assert_not_called()
+                self.assertEqual(bot.handle_search("song"), [spotify_item, youtube_item])
+                youtube.search.assert_called_once()
                 spotify.search.return_value = []
                 self.assertEqual(bot.handle_search("song"), [youtube_item])
                 youtube.search.return_value = []
@@ -240,12 +249,12 @@ class AbuseTests(unittest.TestCase):
 
     def test_youtube_search_parses_metadata_without_scraping(self):
         youtube = YouTube()
-        response = {"items": [{"id": {"videoId": "abc"}, "snippet": {
-            "title": "Song &amp; title", "channelTitle": "Channel"}}]}
+        response = {"items": [{"id": {"videoId": "OL1lo6zBGbM"}, "snippet": {
+            "title": "Song &amp; title", "channelTitle": "Channel - Topic"}}]}
         with patch.object(youtube, "_get", return_value=response):
             song = list(youtube.search("song"))[0]
         self.assertEqual(song.title, "Song & title")
-        self.assertEqual(song.service_links["YouTube"], "https://youtube.com/watch?v=abc")
+        self.assertEqual(song.service_links["YouTube"], "https://youtube.com/watch?v=OL1lo6zBGbM")
 
     def test_spotify_search_parses_metadata(self):
         spotify = Spotify.__new__(Spotify)
@@ -278,8 +287,8 @@ class AbuseTests(unittest.TestCase):
         search.assert_called_once()
         self.assertEqual(results[0].title, "DEMON'S SHOT")
         self.assertEqual(len(results[0].reply_markup.inline_keyboard), 3)
-        spotify.object_to_link.assert_called_once()
-        youtube.object_to_link.assert_called_once()
+        spotify.object_to_link.assert_not_called()
+        youtube.object_to_link.assert_not_called()
 
     def test_apple_song_path_and_modern_metadata(self):
         import json
@@ -404,10 +413,12 @@ class AbuseTests(unittest.TestCase):
 
     def test_bot_construction_without_network(self):
         with patch.dict("linkmusicbot.bot.secrets", spotify_client_id="test", spotify_client_secret="test"), \
-                patch("linkmusicbot.bot.LocalLibrary"):
+                patch("linkmusicbot.bot.LocalLibrary"), patch('linkmusicbot.bot.UsageStats'), patch('linkmusicbot.bot.CoverStore'):
             bot = LinkMusicBot("123456:TEST_TOKEN")
         self.assertEqual(len(bot._music_services), 4)
-        self.assertEqual(len(bot.application.handlers[0]), 3)
+        commands = {command for handler in bot.application.handlers[0]
+                    for command in getattr(handler, 'commands', ())}
+        self.assertTrue({'start', 'connect_spotify', 'disconnect_spotify', 'current'} <= commands)
 
     def test_cached_query_does_not_call_services(self):
         bot = LinkMusicBot.__new__(LinkMusicBot)
@@ -436,8 +447,7 @@ class AbuseTests(unittest.TestCase):
         self.assertEqual(result.thumbnail_url, song.cover_art["url"])
         self.assertEqual(len(result.reply_markup.inline_keyboard), 1)
         self.assertIn("Title", result.input_message_content.message_text)
-        self.assertEqual(result.input_message_content.link_preview_options.url, song.cover_art["url"])
-        self.assertTrue(result.input_message_content.link_preview_options.prefer_large_media)
+        self.assertTrue(result.input_message_content.link_preview_options.is_disabled)
 
     def test_invalid_query_never_reaches_services(self):
         bot = LinkMusicBot.__new__(LinkMusicBot)

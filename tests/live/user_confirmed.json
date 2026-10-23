@@ -1,0 +1,66 @@
+[
+    {
+        "title":  "Enemy with JID - Opening Title Version",
+        "artist":  "Arcane \u0026 Imagine Dragons \u0026 JID",
+        "spotify_url":  "https://open.spotify.com/track/3Sgit2OAwwSJtktbEC61cE",
+        "confirmed_by":  "user",
+        "platforms":  [
+                          "apple",
+                          "spotify",
+                          "yandex",
+                          "youtube"
+                      ],
+        "matches":  [
+                        {
+                            "platform":  "Apple Music",
+                            "title":  "Enemy (Opening Title Version)",
+                            "artist":  "Imagine Dragons \u0026 JID",
+                            "url":  "https://music.apple.com/us/album/enemy-opening-title-version/1895425032?i=6763663971\u0026uo=4"
+                        },
+                        {
+                            "platform":  "Яндекс Музыка",
+                            "title":  "Enemy with JID (Opening Title Version)",
+                            "artist":  "Imagine Dragons \u0026 JID",
+                            "url":  "https://music.yandex.ru/album/41784359/track/132361542"
+                        },
+                        {
+                            "platform":  "YouTube",
+                            "title":  "Enemy with JID (Opening Title Version)",
+                            "artist":  "Imagine Dragons \u0026 JID",
+                            "url":  "https://youtube.com/watch?v=876WJrU48SY"
+                        }
+                    ]
+    },
+    {
+        "title":  "Left and Right (Feat. Jung Kook of BTS)",
+        "artist":  "Charlie Puth \u0026 Jung Kook \u0026 BTS",
+        "spotify_url":  "https://open.spotify.com/track/5Odq8ohlgIbQKMZivbWkEo",
+        "confirmed_by":  "user",
+        "platforms":  [
+                          "apple",
+                          "spotify",
+                          "yandex",
+                          "youtube"
+                      ],
+        "matches":  [
+                        {
+                            "platform":  "Apple Music",
+                            "title":  "Left and Right",
+                            "artist":  "Charlie Puth \u0026 Jung Kook",
+                            "url":  "https://music.apple.com/us/album/left-and-right/1633318292?i=1633318759\u0026uo=4"
+                        },
+                        {
+                            "platform":  "Яндекс Музыка",
+                            "title":  "Left and Right (Feat. Jung Kook of BTS)",
+                            "artist":  "Charlie Puth \u0026 Jung Kook \u0026 BTS",
+                            "url":  "https://music.yandex.ru/album/23702244/track/105355377"
+                        },
+                        {
+                            "platform":  "YouTube",
+                            "title":  "Left And Right (feat. Jung Kook of BTS)",
+                            "artist":  "Charlie Puth",
+                            "url":  "https://youtube.com/watch?v=a7GITgqwDVg"
+                        }
+                    ]
+    }
+]

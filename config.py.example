@@ -7,4 +7,10 @@ secrets = {
     "youtube_token": "",
     # 0 means unlimited locally; provider quotas still apply.
     "youtube_search_limit": 100,
+    "cache_refresh_seconds": 43200,
+    "inline_result_limit": 10,
+    "inline_debounce_ms": 600,
+    # Enable only after configuring HTTPS callback and a stable Fernet key.
+    "spotify_redirect_uri": "",
+    "spotify_token_key_file": "",
 }

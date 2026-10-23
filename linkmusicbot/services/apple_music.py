@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 from ..models import Album, Song
 from ..security import APPLE_HOSTS, fetch_text, valid_url
-from .base import ServiceHandler, same_recording, normalized
+from .base import ServiceHandler, same_recording, normalized, recording_query, compare_recordings
 from ..search_ranking import search_rank
 
 
@@ -16,6 +16,33 @@ class AppleMusic(ServiceHandler):
     """ServiceHandler for Apple Music."""
 
     _BASE_SEARCH_URL = "https://itunes.apple.com/search"
+
+    def _web_search(self, term, country='US'):
+        """Public server-rendered search, independent of the iTunes index."""
+        page = BeautifulSoup(fetch_text(f'https://music.apple.com/{country.lower()}/search',
+                                        APPLE_HOSTS, params={'term': term}), 'html.parser')
+        script = page.find('script', id='serialized-server-data')
+        if script is None:
+            return {'resultCount': 0, 'results': []}
+        payload = loads(script.get_text())
+        results, seen = [], set()
+        for entry in payload.get('data', []):
+            for section in entry.get('data', {}).get('sections', []):
+                for item in section.get('items', []):
+                    descriptor = item.get('contentDescriptor', {})
+                    url = descriptor.get('url', '')
+                    if descriptor.get('kind') != 'song' or not valid_url(url, APPLE_HOSTS) or url in seen:
+                        continue
+                    artists = [link.get('title', '') for link in item.get('subtitleLinks', [])
+                               if '/artist/' in link.get('segue', {}).get('destination', {}).get('contentDescriptor', {}).get('url', '')]
+                    if not artists and '·' in (item.get('subtitle') or ''):
+                        artists = [item['subtitle'].split('·', 1)[1].strip()]
+                    if not artists or not item.get('title'):
+                        continue
+                    seen.add(url)
+                    results.append({'wrapperType': 'track', 'trackName': item['title'],
+                                    'artistName': ' & '.join(artists), 'collectionName': '', 'trackViewUrl': url})
+        return {'resultCount': len(results), 'results': results}
 
     @staticmethod
     def _large_artwork(url):
@@ -30,7 +57,7 @@ class AppleMusic(ServiceHandler):
     @staticmethod
     def _format_query(item):
         """Format a search query."""
-        return "{} {}".format(item.title, item.artist)
+        return recording_query(item)
 
     @staticmethod
     def service_name():
@@ -110,6 +137,7 @@ class AppleMusic(ServiceHandler):
                     item = Song(unescape(recording["name"]),
                                 self._artists(recording.get("byArtist")),
                                 recording.get("inAlbum", {}).get("name", ""))
+                    item.isrc = recording.get('isrcCode')
                     image = recording.get("inAlbum", {}).get("image") or recording.get("image")
                 elif not song and entry.get("@type") == "MusicAlbum":
                     item = Album(unescape(entry["name"]), self._artists(entry.get("byArtist")))
@@ -146,6 +174,11 @@ class AppleMusic(ServiceHandler):
         if not search.get("results") and country != "US":
             search = self._search(query, country="US", media="music", entity="song",
                                   explicit=True, limit=max(20, n))
+        if not search.get('results'):
+            try:
+                search = self._web_search(query, country)
+            except Exception:
+                pass
         def rank(item):
             return search_rank(item.get("trackName", ""), query)
         seen = set()
@@ -160,6 +193,7 @@ class AppleMusic(ServiceHandler):
                 result = Song(
                     item["trackName"], item["artistName"], item["collectionName"]
                 )
+                result.duration_ms = item.get('trackTimeMillis')
             elif wrapper_type == "collection":
                 result = Album(item["collectionName"], item["artistName"])
             else:
@@ -186,18 +220,23 @@ class AppleMusic(ServiceHandler):
         if not search.get("results") and country != "US":
             search = self._search(self._format_query(song), country="US",
                                   media="music", entity="song", explicit=True)
-        if search["resultCount"] < 1:
-            raise ValueError("Couldn't find any song results for {!r}.".format(song))
         def normalized(value):
             return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", unescape(value)).casefold())
         title, artist = normalized(song.title), normalized(song.artist)
         def rank(item):
             title_match = normalized(item.get("trackName", "")) == title
             artist_match = normalized(item.get("artistName", "")) == artist
-            return (title_match and artist_match, title_match, artist_match,
+            assessment = compare_recordings(song, item.get('trackName', ''), item.get('artistName', ''), duration_ms=item.get('trackTimeMillis'))
+            return (assessment.score, title_match and artist_match, title_match, artist_match,
                     normalized(item.get("collectionName", "")) == normalized(song.album))
         matches = [item for item in search["results"]
-                   if same_recording(song, item.get("trackName", ""), item.get("artistName", ""))]
+                     if same_recording(song, item.get("trackName", ""), item.get("artistName", ""), duration_ms=item.get('trackTimeMillis'))]
+        if not matches:
+            try:
+                matches = [item for item in self._web_search(self._format_query(song), country)['results']
+                             if same_recording(song, item.get('trackName', ''), item.get('artistName', ''), duration_ms=item.get('trackTimeMillis'))]
+            except Exception:
+                pass
         if not matches:
             raise ValueError("No matching Apple Music recording")
         return max(matches, key=rank)["trackViewUrl"]

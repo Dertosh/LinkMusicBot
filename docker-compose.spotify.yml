@@ -1,0 +1,12 @@
+# docker compose -f docker-compose.prod.yml -f docker-compose.spotify.yml up -d
+# Host file must be readable by container uid 10001; never commit it.
+services:
+  linkmusicbot:
+    environment:
+      SPOTIFY_TOKEN_KEY_FILE: /run/secrets/spotify-token-key
+    secrets:
+      - source: spotify_token_key
+        target: spotify-token-key
+secrets:
+  spotify_token_key:
+    file: ./spotify-token.key

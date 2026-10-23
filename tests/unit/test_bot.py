@@ -13,6 +13,103 @@ from telegram.error import BadRequest
 
 
 class BotTests(unittest.TestCase):
+    def test_refresh_keeps_verified_direct_link_when_provider_falls_back(self):
+        from linkmusicbot.presentation import build_result
+        from telegram import InlineKeyboardButton
+        service = MagicMock()
+        service.service_name.return_value = "YouTube"
+        service.can_handle_link.return_value = True
+        self.bot._music_services = [service]
+        song = Song("Song", "Artist", "")
+        cached = build_result(song, [[InlineKeyboardButton("YouTube", url="https://youtube.com/watch?v=OL1lo6zBGbM")]])
+        fresh = build_result(song, [[InlineKeyboardButton("YouTube", url="https://www.youtube.com/results?search_query=Song")]])
+        retained = self.bot._retain_direct_links(fresh, cached)
+        self.assertEqual(retained.reply_markup.inline_keyboard[0][0].url, cached.reply_markup.inline_keyboard[0][0].url)
+
+    def test_provider_search_retains_known_local_prefix_candidates(self):
+        import tempfile
+        from pathlib import Path
+        from linkmusicbot.library import LocalLibrary
+        from linkmusicbot.presentation import build_result
+        with tempfile.TemporaryDirectory() as folder:
+            library = LocalLibrary(str(Path(folder) / "cache.sqlite3"))
+            try:
+                library.put("known", [build_result(Song("DEMON'S SHOT", "Aiobahn +81", ""), [])])
+                library.put("legacy", [build_result(Song("DEMON'S SHOT (Official MV)", "Uploader", ""), [])])
+                service = MagicMock()
+                service.service_name.return_value = "Apple Music"
+                service.search.return_value = [Song("Demons", "Imagine Dragons", "")]
+                self.bot.search_service = service
+                self.bot._music_services = [service]
+                self.bot._library = library
+                results = self.bot.handle_search("demon's")
+                self.assertIn("DEMON'S SHOT", [r.title for r in results])
+                self.assertNotIn("DEMON'S SHOT (Official MV)", [r.title for r in results])
+            finally:
+                library.db.close()
+    def test_cover_link_keeps_selected_cover_first_and_adds_other_performers(self):
+        from linkmusicbot.presentation import build_result
+        cover = build_result(Song("Rabbit Hole (Cover by Sati Akura)", "Sati Akura", ""), [])
+        duplicate = build_result(Song("Rabbit Hole", "Sati Akura", ""), [])
+        other = build_result(Song("Rabbit Hole", "Other Performer", ""), [])
+        self.bot.handle_link = MagicMock(return_value=cover)
+        self.bot.handle_search = MagicMock(return_value=[duplicate, other])
+        results = self.bot._link_results("https://youtu.be/vpcra3YEAN0")
+        self.assertEqual(results, [cover, other])
+        self.bot.handle_search.assert_called_once_with("Rabbit Hole")
+    def test_pagination_reuses_cached_snapshot_without_provider_calls(self):
+        cached = list(range(15))
+        self.bot._guard.put("song", cached)
+        self.bot._build_results = MagicMock()
+        update = MagicMock()
+        update.inline_query.query = "song"
+        update.inline_query.offset = "10"
+        update.inline_query.from_user.id = 1
+        update.inline_query.answer = AsyncMock()
+        asyncio.run(self.bot.inline_query_handler(update, None))
+        update.inline_query.answer.assert_awaited_once_with(cached[10:], cache_time=60, is_personal=True)
+        self.bot._build_results.assert_not_called()
+
+    def test_unrelated_provider_results_are_filtered(self):
+        service = MagicMock()
+        service.service_name.return_value = "Apple Music"
+        service.search.return_value = [Song("Miraaž", "STEFAN", ""), Song("Mājas", "MUUD", "")]
+        self.bot.search_service = service
+        self.bot._music_services = [service]
+        self.bot.make_iqr = lambda item: item
+        self.assertEqual([s.title for s in self.bot.handle_search("Miraaž Stefan")], ["Miraaž"])
+    def test_multi_platform_search_merges_links_and_keeps_versions(self):
+        apple, spotify = MagicMock(), MagicMock()
+        apple.service_name.return_value = "Apple Music"
+        spotify.service_name.return_value = "Spotify"
+        original = Song("Song", "Artist", "Album")
+        original.service_links = {"Apple Music": "https://music.apple.com/song/1"}
+        duplicate = Song("Song", "Artist", "Album")
+        duplicate.service_links = {"Spotify": "https://open.spotify.com/track/1"}
+        remix = Song("Song (Remix)", "Artist", "Album")
+        remix.service_links = {"Spotify": "https://open.spotify.com/track/2"}
+        apple.search.return_value = [original]
+        spotify.search.return_value = [duplicate, remix]
+        self.bot.search_service = apple
+        self.bot._music_services = [apple, spotify]
+        self.bot.make_iqr = lambda item: item
+        items = self.bot.handle_search("Song")
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0].service_links["Spotify"], "https://open.spotify.com/track/1")
+        self.assertEqual(items[1].service_links["Spotify"], "https://open.spotify.com/track/2")
+
+    def test_more_than_two_candidates_and_short_title_prefix(self):
+        service = MagicMock()
+        service.service_name.return_value = "Apple Music"
+        service.search.return_value = [Song("Demon's Long Title", "A", ""),
+            Song("Demon's", "B", ""), Song("Demons", "C", ""), Song("Demon's Shot", "D", "")]
+        self.bot.search_service = service
+        self.bot._music_services = [service]
+        self.bot.make_iqr = lambda item: item
+        items = self.bot.handle_search("demon's")
+        self.assertEqual(len(items), 4)
+        self.assertIn(items[0].title, ["Demons", "Demon's"])
+        self.assertIn("Demon's Shot", [s.title for s in items])
     def test_all_search_services_prioritize_original_beyond_first_two(self):
         for name in ["Apple Music", "Spotify", "YouTube", "Яндекс Музыка"]:
             with self.subTest(service=name):
@@ -128,7 +225,7 @@ class BotTests(unittest.TestCase):
         self.bot._music_services = [broken, working]
         result = self.bot.make_iqr(Song("Title", "Artist", "Album"))
         self.assertEqual(result.reply_markup.inline_keyboard[0][0].text, "YouTube")
-        self.assertIn("/results?", result.reply_markup.inline_keyboard[0][0].url)
+        self.assertIn("https://music.youtube.com/search?", result.reply_markup.inline_keyboard[0][0].url)
         self.assertEqual(result.reply_markup.inline_keyboard[1][0].text, "Spotify")
 
     def test_untrusted_cover_is_not_used_in_preview(self):

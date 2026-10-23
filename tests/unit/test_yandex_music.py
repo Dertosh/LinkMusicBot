@@ -14,6 +14,28 @@ def track(identifier=63823):
 
 
 class YandexTests(unittest.TestCase):
+    def test_toy_retries_title_and_matches_editorial_note(self):
+        song = Song("Toy", "Netta", "Toy")
+        video = dict(track(39918274), title="TOY", version="Music Video Version",
+                     artists=[{"name": "Netta"}])
+        original = dict(track(39786405), title="Toy", version="Израиль. Победитель на «Евровидении-2018»",
+                        artists=[{"name": "Netta"}], albums=[{"id": 11165199, "title": "Goody Bag EP"}])
+        wrong = dict(original, artists=[{"name": "Young Fathers"}])
+        with patch.object(self.service, "_get", side_effect=[
+            {"tracks": {"results": [video]}}, {"tracks": {"results": [wrong, original]}}
+        ]) as get:
+            link = self.service.song_to_link(song)
+        self.assertEqual(link, "https://music.yandex.ru/album/11165199/track/39786405")
+        self.assertEqual([c.args[1]["text"] for c in get.call_args_list], ["Toy Netta", "Toy"])
+
+    def test_editorial_note_does_not_remove_musical_version(self):
+        original = Song("Toy", "Netta", "")
+        for version in ["Remix", "Live", "Music Video Version", "Sagi Kariv Remix"]:
+            candidate = Song("Toy (" + version + ")", "Netta", "")
+            self.assertFalse(self.service._same_item(original, candidate))
+        annotated_remix = Song("Toy (Remix) (Израиль. Победитель на «Евровидении-2018»)", "Netta", "")
+        self.assertFalse(self.service._same_item(original, annotated_remix))
+
     def test_wrong_first_track_does_not_hide_correct_match(self):
         wrong = dict(track(1), title="Other Song")
         with patch.object(self.service, "_get", return_value={"tracks": {"results": [wrong, track()]}}):

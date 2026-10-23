@@ -8,7 +8,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from ..settings import secrets
 from ..models import Album, Song
 from ..security import check_budget, valid_url
-from .base import ServiceHandler, search_links, same_recording
+from .base import ServiceHandler, search_links, same_recording, query_variants, compare_recordings
 
 
 class Spotify(ServiceHandler):
@@ -53,6 +53,8 @@ class Spotify(ServiceHandler):
         for track in response["tracks"]["items"][:n]:
             song = Song(track["name"], " & ".join(a["name"] for a in track["artists"]),
                         track["album"]["name"])
+            song.duration_ms = track.get('duration_ms')
+            song.isrc = track.get('external_ids', {}).get('isrc')
             images = track["album"].get("images", [])
             if images:
                 song.cover_art = images[0]
@@ -68,16 +70,23 @@ class Spotify(ServiceHandler):
         return match.group(1)
 
     def _matched_link(self, item, kind):
-        for query in (self._format_query(item), self._naive_query(item)):
+        queries = [self._format_query(item), *query_variants(self._naive_query(item)), item.title]
+        for query in dict.fromkeys(queries):
             check_budget()
             response = self._spotify.search(query, type=kind, limit=10)
+            matches = []
             for entry in response[kind + "s"]["items"]:
                 artist = " & ".join(a["name"] for a in entry.get("artists", []))
-                if same_recording(item, entry.get("name", ""), artist):
-                    images = (entry.get("album", {}) if kind == "track" else entry).get("images", [])
-                    if item.cover_art is None and images:
-                        item.cover_art = images[0]
-                    return entry["external_urls"]["spotify"]
+                assessment = compare_recordings(item, entry.get("name", ""), artist,
+                                               duration_ms=entry.get('duration_ms'), isrc=entry.get('external_ids', {}).get('isrc'))
+                if assessment.status == 'match':
+                    matches.append((assessment.score, entry))
+            if matches:
+                entry = max(matches, key=lambda pair: (pair[0], pair[1].get('album', {}).get('name') == getattr(item, 'album', None)))[1]
+                images = (entry.get("album", {}) if kind == "track" else entry).get("images", [])
+                if item.cover_art is None and images:
+                    item.cover_art = images[0]
+                return entry["external_urls"]["spotify"]
         raise ValueError("No matching Spotify recording")
 
     def album_to_link(self, album):
@@ -95,13 +104,22 @@ class Spotify(ServiceHandler):
         """Convert a Spotify link into an Album."""
         check_budget()
         album = self._spotify.album(self._validated_id(link, "album"))
-        return Album(album["name"], " & ".join(a["name"] for a in album["artists"]))
+        item = Album(album["name"], " & ".join(a["name"] for a in album["artists"]))
+        item.service_links = {self.service_name(): "https://open.spotify.com/album/" + self._validated_id(link, "album")}
+        return item
 
     def link_to_song(self, link):
         """Convert a Spotify link into a Song."""
         check_budget()
         song = self._spotify.track(self._validated_id(link, "track"))
-        return Song(song["name"], " & ".join(a["name"] for a in song["artists"]), song["album"]["name"])
+        item = Song(song["name"], " & ".join(a["name"] for a in song["artists"]), song["album"]["name"])
+        item.duration_ms = song.get('duration_ms')
+        item.isrc = song.get('external_ids', {}).get('isrc')
+        images = song.get('album', {}).get('images', [])
+        if images:
+            item.cover_art = images[0]
+        item.service_links = {self.service_name(): "https://open.spotify.com/track/" + self._validated_id(link, "track")}
+        return item
 
     def song_to_link(self, song):
         return self._matched_link(song, "track")

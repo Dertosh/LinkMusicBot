@@ -25,7 +25,7 @@ class UnicodeMusicTests(unittest.TestCase):
                 bot.make_iqr = lambda item: item
                 for text in [query, broken]:
                     self.assertEqual(bot.handle_search(text)[0].title, title)
-                    service.search.assert_called_with(normalize_query(query), n=10)
+                    service.search.assert_any_call(normalize_query(query), n=10)
 
     def test_unicode_original_and_remix_stay_separate(self):
         for title, artist in [("Miraaž", "STEFAN"), ("Jóga", "Björk"), ("Déjà Vu", "Beyoncé"),

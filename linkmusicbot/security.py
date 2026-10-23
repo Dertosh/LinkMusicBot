@@ -3,22 +3,53 @@ import ipaddress
 import socket
 import time
 from collections import OrderedDict, deque
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from threading import Lock
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import requests
+import sqlite3
+from pathlib import Path
 from .text_encoding import repair_text
 
 APPLE_HOSTS = {"itunes.apple.com", "music.apple.com"}
-YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 MAX_BYTES = 2 * 1024 * 1024
+
+_http_session = ContextVar('music_http_session', default=None)
+
+
+@contextmanager
+def http_session_scope():
+    """Reuse connections within one provider job; never share across workers."""
+    holder = [None]
+    token = _http_session.set(holder)
+    try:
+        yield
+    finally:
+        if holder[0] is not None:
+            holder[0].close()
+        _http_session.reset(token)
+
+
+def youtube_music_url(url):
+    if not valid_url(url, YOUTUBE_HOSTS):
+        return url
+    parsed = urlparse(url)
+    if parsed.hostname == 'youtu.be':
+        return 'https://music.youtube.com/watch?' + urlencode({'v': parsed.path.strip('/')})
+    if parsed.path == '/results':
+        params = dict(parse_qsl(parsed.query))
+        return 'https://music.youtube.com/search?' + urlencode({'q': params.get('search_query', '')})
+    return urlunparse(('https', 'music.youtube.com', parsed.path, '', parsed.query, ''))
 _deadline = ContextVar("request_deadline", default=None)
 
 
 def normalize_query(query):
     query = repair_text(query.strip())
+    if query.startswith(r'https\://'):
+        query = 'https://' + query[len(r'https\://'):]
     hosts = APPLE_HOSTS | YOUTUBE_HOSTS | {"open.spotify.com", "music.yandex.ru", "music.yandex.com", "music.yandex.by", "music.yandex.kz"}
     if valid_url(query, hosts):
         parsed = urlparse(query)
@@ -62,8 +93,13 @@ def fetch_text(url, hosts, params=None):
     TLS verification remains enabled. Do not use untrusted DNS or proxies.
     """
     deadline = min(_deadline.get() or float("inf"), time.monotonic() + 25)
-    with requests.Session() as session:
+    holder = _http_session.get()
+    if holder is not None and holder[0] is None:
+        holder[0] = requests.Session()
+    manager = nullcontext(holder[0]) if holder is not None else requests.Session()
+    with manager as session:
         session.trust_env = False  # no implicit proxies or .netrc credentials
+        session.cookies.clear()  # connection reuse must not persist site cookies
         for _ in range(4):
             check_budget()
             if not valid_url(url, hosts):
@@ -111,12 +147,12 @@ class QueryGuard:
     def query_lock(self, query):
         return self.query_locks[hash(query) % len(self.query_locks)]
 
-    def allow(self, user):
+    def allow(self, user, min_interval=5):
         now = time.monotonic()
         with self.lock:
             while self.global_requests and self.global_requests[0] <= now - 60:
                 self.global_requests.popleft()
-            if now - self.users.get(user, -float("inf")) < 5:
+            if now - self.users.get(user, -float("inf")) < min_interval:
                 return False
             if len(self.global_requests) >= 10:
                 return False
@@ -150,12 +186,41 @@ class QuotaExceeded(ValueError):
 
 class SearchQuota:
     """Reserve a bounded number of YouTube searches in a rolling 24-hour window."""
-    def __init__(self, limit=100):
+    def __init__(self, limit=100, path=None):
         self.limit = max(0, int(limit))
         self.calls = deque()
         self.lock = Lock()
+        self.db = None
+        self.blocked_until = 0
+        if path is not None:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            self.db = sqlite3.connect(path, timeout=5, check_same_thread=False)
+            self.db.execute("PRAGMA journal_mode=WAL")
+            self.db.executescript("""
+                CREATE TABLE IF NOT EXISTS youtube_search_calls (called REAL NOT NULL);
+                CREATE INDEX IF NOT EXISTS youtube_search_calls_time ON youtube_search_calls(called);
+                CREATE TABLE IF NOT EXISTS youtube_quota_state (id INTEGER PRIMARY KEY, blocked_until REAL NOT NULL);
+            """)
 
     def reserve(self):
+        if self.db is not None:
+            now = time.time()
+            with self.lock:
+                self.db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.db.execute("DELETE FROM youtube_search_calls WHERE called<=?", (now - 86400,))
+                    row = self.db.execute("SELECT blocked_until FROM youtube_quota_state WHERE id=1").fetchone()
+                    count = self.db.execute("SELECT count(*) FROM youtube_search_calls").fetchone()[0]
+                    if (row and row[0] > now) or (self.limit and count >= self.limit):
+                        raise QuotaExceeded("YouTube search budget exhausted")
+                    self.db.execute("INSERT INTO youtube_search_calls VALUES (?)", (now,))
+                    self.db.commit()
+                except BaseException:
+                    self.db.rollback()
+                    raise
+            return
+        if self.blocked_until > time.time():
+            raise QuotaExceeded("YouTube API quota exhausted")
         if self.limit == 0:
             return
         now = time.monotonic()
@@ -165,3 +230,24 @@ class SearchQuota:
             if len(self.calls) >= self.limit:
                 raise QuotaExceeded("YouTube search budget exhausted")
             self.calls.append(now)
+
+    def mark_exhausted(self, seconds=86400):
+        until = time.time() + seconds
+        with self.lock:
+            if self.db is not None:
+                with self.db:
+                    self.db.execute("INSERT INTO youtube_quota_state VALUES (1, ?) "
+                                    "ON CONFLICT(id) DO UPDATE SET blocked_until=max(blocked_until, excluded.blocked_until)", (until,))
+            else:
+                self.blocked_until = until
+
+    def status(self):
+        now = time.time()
+        with self.lock:
+            if self.db is not None:
+                count = self.db.execute("SELECT count(*) FROM youtube_search_calls WHERE called>?", (now - 86400,)).fetchone()[0]
+                row = self.db.execute("SELECT blocked_until FROM youtube_quota_state WHERE id=1").fetchone()
+                blocked = row[0] if row else 0
+            else:
+                count, blocked = len(self.calls), self.blocked_until
+        return {"used": count, "limit": self.limit, "blocked_until": blocked if blocked > now else 0}

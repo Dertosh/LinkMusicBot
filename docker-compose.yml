@@ -7,6 +7,8 @@ services:
     mem_limit: 256m
     cpus: 1.0
     pids_limit: 64
+    ports:
+      - "127.0.0.1:8080:8080"
     read_only: true
     tmpfs:
       - /tmp

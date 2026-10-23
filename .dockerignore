@@ -1,11 +1,13 @@
 .git
 .gitignore
+.codex-remote-attachments/
 __pycache__/
 *.py[cod]
 config.py
 config.py.*
 bot.env
 bot.env.*
+spotify-token.key
 .venv/
 venv/
 .uv-cache/

@@ -1,0 +1,14 @@
+{
+  "spotify": {"url":"https://open.spotify.com/track/1r9xUipOqoNwggBpENDsvJ","title":"Enemy (with JID) - from the series Arcane League of Legends","artist":"Imagine Dragons & JID & Arcane & League of Legends","duration_ms":173381},
+  "matches": [
+    {"url":"https://music.apple.com/us/song/enemy-from-arcane-league-of-legends/1591640885","title":"Enemy (From Arcane: League of Legends)","artist":"Imagine Dragons & JID"},
+    {"url":"https://music.yandex.ru/album/21002416/track/94074268","title":"Enemy (from the series Arcane League of Legends)","artist":"Imagine Dragons & JID & Arcane & League of Legends"},
+    {"url":"https://music.youtube.com/watch?v=IOrbP1OqNsg","title":"Enemy (from the series Arcane League of Legends)","artist":"Imagine Dragons & JID & Arcane & League Of Legends"}
+  ],
+  "unverified": [
+    {"url":"https://music.youtube.com/watch?v=vxa8ShIm9yw","title":"Enemy (From the series Arcane League of Legends)","artist":"Imagine Dragons & Arcane & League Of Legends","reason":"Incomplete performer credits: neither author credit nor similar duration proves a different or identical recording"}
+  ],
+  "non_matches": [
+    {"url":"https://music.yandex.ru/album/41784359/track/132361542","title":"Enemy with JID (Opening Title Version)","artist":"Imagine Dragons & JID"}
+  ]
+}

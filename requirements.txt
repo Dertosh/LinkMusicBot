@@ -3,3 +3,6 @@ spotipy
 beautifulsoup4
 requests
 yt-dlp
+ytmusicapi
+cryptography
+anyascii

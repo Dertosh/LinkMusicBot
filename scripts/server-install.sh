@@ -14,10 +14,6 @@ case "${1:-status}" in
     docker image inspect "$IMAGE" >/dev/null
     # Some Docker DNS setups fail on Yandex while host DNS works.
     # Resolve on each install; HTTPS still verifies the original hostname.
-    YANDEX_API_IP=""
-    if command -v getent >/dev/null 2>&1; then
-      YANDEX_API_IP=$(getent ahostsv4 api.music.yandex.net | awk 'NR==1 {print $1}')
-    fi
     # Validate credentials without printing their values before replacing the container.
     docker run --rm --network none --env-file "$ENVF" --entrypoint python "$IMAGE" -c '
 import os, sys
@@ -27,12 +23,25 @@ if missing:
     print("Missing settings: " + ", ".join(missing), file=sys.stderr)
     sys.exit(1)
 '
-    if docker container inspect "$NAME" >/dev/null 2>&1; then docker rm -f "$NAME" >/dev/null; fi
     set --
-    if [ -n "$YANDEX_API_IP" ]; then
-      set -- --add-host "api.music.yandex.net:$YANDEX_API_IP"
+    key_file="${SPOTIFY_TOKEN_KEY_HOST_FILE:-$(dirname "$ENVF")/spotify-token.key}"
+    if [ -f "$key_file" ]; then
+      set -- "$@" --mount "type=bind,source=$key_file,target=/run/secrets/spotify-token-key,readonly" \
+        --env SPOTIFY_TOKEN_KEY_FILE=/run/secrets/spotify-token-key
+      docker run --rm --network none "$@" --entrypoint python "$IMAGE" -c \
+        'from pathlib import Path; from cryptography.fernet import Fernet; Fernet(Path("/run/secrets/spotify-token-key").read_text().strip())'
     fi
+    if command -v getent >/dev/null 2>&1; then
+      for host in api.music.yandex.net api.telegram.org itunes.apple.com music.apple.com accounts.spotify.com api.spotify.com www.googleapis.com www.youtube.com music.youtube.com; do
+        resolved_ip=$(getent ahostsv4 "$host" | awk 'NR==1 {print $1}')
+        if [ -n "$resolved_ip" ]; then
+          set -- "$@" --add-host "$host:$resolved_ip"
+        fi
+      done
+    fi
+    if docker container inspect "$NAME" >/dev/null 2>&1; then docker rm -f "$NAME" >/dev/null; fi
     docker run -d "$@" --name "$NAME" --restart unless-stopped --init \
+      --publish "127.0.0.1:8080:8080" \
       --env-file "$ENVF" --read-only --tmpfs /tmp --cap-drop ALL \
       --security-opt no-new-privileges --memory 256m --cpus 1 --pids-limit 64 \
       --mount "type=volume,source=$DATA_VOLUME,target=/app/data" "$IMAGE"

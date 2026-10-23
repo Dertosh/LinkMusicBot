@@ -4,6 +4,7 @@ config.py.*
 !config.py.example
 bot.env
 bot.env.*
+spotify-token.key
 !bot.env.example
 .env
 .env.*
@@ -19,6 +20,7 @@ venv/
 env/
 
 # Tool caches and test reports
+.codex-remote-attachments/
 .uv-cache/
 .pytest_cache/
 .mypy_cache/
