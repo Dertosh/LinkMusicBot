@@ -9,11 +9,13 @@ from telegram import InlineQueryResultArticle, InlineQueryResultPhoto, InlineQue
 
 
 def message_text(result):
+    """Read message text from either an SDK content object or a cached dictionary."""
     content = result.input_message_content
     return content.get('message_text', '') if isinstance(content, dict) else content.message_text
 
 
 def as_photo(result, file_id=None):
+    """Build a URL or cached photo result and preserve loading callback identity."""
     rows = []
     for row in result.reply_markup.inline_keyboard:
         buttons = []
@@ -33,6 +35,7 @@ def as_photo(result, file_id=None):
 
 
 def as_text(result):
+    """Build a text-only fallback with webpage previews explicitly disabled."""
     return InlineQueryResultArticle(id='tx-' + result.id, title=result.title,
         description=result.description, input_message_content=InputTextMessageContent(
             message_text(result), link_preview_options=LinkPreviewOptions(is_disabled=True)),
@@ -40,6 +43,7 @@ def as_text(result):
 
 
 def as_preview(result):
+    """Build an article with the cover URL used as a large webpage preview."""
     return InlineQueryResultArticle(id=result.id, title=result.title,
         description=result.description, thumbnail_url=result.thumbnail_url,
         input_message_content=InputTextMessageContent(message_text(result),
@@ -49,6 +53,7 @@ def as_preview(result):
 
 class CoverStore:
     def __init__(self, path):
+        """Open the persistent, per-bot mapping from cover URLs to Telegram file IDs."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.lock = Lock()
         self.db = sqlite3.connect(path, check_same_thread=False)
@@ -58,25 +63,31 @@ class CoverStore:
         self._uploads = {}
 
     def get(self, bot_id, url):
+        """Return the cached Telegram file ID for this bot and cover URL, if present."""
         with self.lock:
             row = self.db.execute('SELECT file_id FROM covers WHERE bot_id=? AND url=?',
                                   (str(bot_id), url)).fetchone()
         return row[0] if row else None
 
     def put(self, bot_id, url, file_id):
+        """Persist a reusable cover file ID scoped to the bot that uploaded it."""
         with self.lock, self.db:
             self.db.execute('INSERT OR REPLACE INTO covers VALUES (?,?,?,?)',
                             (str(bot_id), url, file_id, time.time()))
 
     def forget(self, bot_id, url):
+        """Remove a rejected file ID so a later request can upload the cover again."""
         with self.lock, self.db:
             self.db.execute('DELETE FROM covers WHERE bot_id=? AND url=?', (str(bot_id), url))
 
     async def upload(self, bot, chat_id, url):
+        """Reuse a saved file ID or coalesce concurrent uploads of the same cover."""
         existing = self.get(bot.id, url)
         if existing:
             return existing
         key = (bot.id, url)
+        # File IDs belong to a bot; sharing the same URL does not make them
+        # transferable to another bot using this database.
         if key in self._uploads:
             return await asyncio.shield(self._uploads[key])
         async def send():
@@ -93,4 +104,5 @@ class CoverStore:
                 self._uploads.pop(key, None)
 
     def close(self):
+        """Close the cover metadata database."""
         self.db.close()

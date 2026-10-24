@@ -34,6 +34,7 @@ def http_session_scope():
 
 
 def youtube_music_url(url):
+    """Convert supported YouTube links and searches to their YouTube Music equivalents."""
     if not valid_url(url, YOUTUBE_HOSTS):
         return url
     parsed = urlparse(url)
@@ -47,6 +48,7 @@ _deadline = ContextVar("request_deadline", default=None)
 
 
 def normalize_query(query):
+    """Repair pasted text and remove tracking details from supported music links."""
     query = repair_text(query.strip())
     if query.startswith(r'https\://'):
         query = 'https://' + query[len(r'https\://'):]
@@ -62,6 +64,7 @@ def normalize_query(query):
 
 
 def valid_url(url, hosts):
+    """Check HTTPS URL structure and require an explicitly allowed hostname."""
     try:
         parsed = urlparse(url)
         return (len(url) <= 2048 and not any(ord(c) <= 32 for c in url)
@@ -73,6 +76,7 @@ def valid_url(url, hosts):
 
 
 def check_budget():
+    """Raise when the current request's monotonic deadline has expired."""
     deadline = _deadline.get()
     if deadline is not None and time.monotonic() >= deadline:
         raise TimeoutError("Request budget exceeded")
@@ -80,6 +84,7 @@ def check_budget():
 
 @contextmanager
 def request_budget(seconds=30):
+    """Set a bounded request deadline and restore the caller's deadline on exit."""
     token = _deadline.set(time.monotonic() + seconds)
     try:
         yield
@@ -137,6 +142,7 @@ def fetch_text(url, hosts, params=None):
 
 class QueryGuard:
     def __init__(self):
+        """Initialize bounded in-memory result, rate-limit, and striped query-lock state."""
         self.lock = Lock()
         self.users = OrderedDict()
         self.global_requests = deque()
@@ -145,9 +151,11 @@ class QueryGuard:
         self.query_locks = [Lock() for _ in range(32)]
 
     def query_lock(self, query):
+        """Return the fixed lock stripe used to coalesce work for a query."""
         return self.query_locks[hash(query) % len(self.query_locks)]
 
     def allow(self, user, min_interval=5):
+        """Reserve a rate-limited request under both user and global limits."""
         now = time.monotonic()
         with self.lock:
             while self.global_requests and self.global_requests[0] <= now - 60:
@@ -164,6 +172,7 @@ class QueryGuard:
             return True
 
     def get(self, query):
+        """Return an unexpired cached result and update its LRU position."""
         with self.lock:
             entry = self.cache.get(query)
             if entry is not None and entry[0] > time.monotonic():
@@ -173,6 +182,7 @@ class QueryGuard:
             return None
 
     def put(self, query, results):
+        """Store results for thirty minutes and evict the oldest excess cache entry."""
         with self.lock:
             self.cache[query] = (time.monotonic() + 1800, results)
             self.cache.move_to_end(query)
@@ -187,6 +197,7 @@ class QuotaExceeded(ValueError):
 class SearchQuota:
     """Reserve a bounded number of YouTube searches in a rolling 24-hour window."""
     def __init__(self, limit=100, path=None):
+        """Initialize the rolling YouTube search budget and optional persistent counters."""
         self.limit = max(0, int(limit))
         self.calls = deque()
         self.lock = Lock()
@@ -203,6 +214,7 @@ class SearchQuota:
             """)
 
     def reserve(self):
+        """Atomically reserve one search or raise when a limit or provider block applies."""
         if self.db is not None:
             now = time.time()
             with self.lock:
@@ -232,6 +244,7 @@ class SearchQuota:
             self.calls.append(now)
 
     def mark_exhausted(self, seconds=86400):
+        """Persist a provider-reported quota block without shortening an existing block."""
         until = time.time() + seconds
         with self.lock:
             if self.db is not None:
@@ -242,6 +255,7 @@ class SearchQuota:
                 self.blocked_until = until
 
     def status(self):
+        """Return locally tracked usage, configured limit, and any active quota block."""
         now = time.time()
         with self.lock:
             if self.db is not None:

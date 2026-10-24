@@ -18,6 +18,7 @@ from .cache_revision import search_revision
 
 
 def search_text(value):
+    """Normalize cached search terms, repairing mojibake and removing punctuation."""
     value = unicodedata.normalize("NFKC", repair_text(value))
     value = "".join(c for c in unicodedata.normalize("NFKD", value)
                     if not ("\u0300" <= c <= "\u036f"))
@@ -26,6 +27,7 @@ def search_text(value):
 
 class LocalLibrary:
     def __init__(self, path, refresh_seconds=None, result_limit=None):
+        """Open the persistent query cache and track catalogue with the current search revision."""
         self.refresh_seconds = refresh_seconds or secrets.get("cache_refresh_seconds", 43200)
         self.result_limit = result_limit or 50
         self.revision = search_revision()
@@ -45,11 +47,13 @@ class LocalLibrary:
 
     @staticmethod
     def _priority(payload, query):
+        """Compute a SQLite sorting weight from title relevance and version preference."""
         relevance, preferred, _ = search_rank(json.loads(payload)[0]["title"], query)
         return relevance * 2 + preferred
 
     @staticmethod
     def _decode(payload):
+        """Restore cached SDK results and normalize legacy message content and buttons."""
         from .security import youtube_music_url
         results = []
         for data in json.loads(payload):
@@ -67,6 +71,7 @@ class LocalLibrary:
         return results
 
     def get(self, query):
+        """Return a saved query snapshot or fall back to matching local tracks."""
         query = normalize_query(query)
         with self.lock:
             row = self.db.execute("SELECT payload FROM queries WHERE query=?", (query,)).fetchone()
@@ -75,6 +80,7 @@ class LocalLibrary:
         return self.get_local(query)
 
     def get_local(self, query):
+        """Find catalogue tracks containing every normalized query token."""
         query = normalize_query(query)
         with self.lock:
             if "://" in query:
@@ -89,6 +95,7 @@ class LocalLibrary:
             return [self._decode(row[0])[0] for row in rows] or None
 
     def put(self, query, results):
+        """Save a query snapshot and searchable track entries without expiring the catalogue."""
         query = normalize_query(query)
         now = time.time()
         with self.lock, self.db:
@@ -114,17 +121,21 @@ class LocalLibrary:
                             'AND query NOT IN (SELECT query FROM refresh_attempts)')
 
     def needs_refresh(self, query):
+        """Check age and code revision while enforcing the refresh retry cooldown."""
         query = normalize_query(query)
         with self.lock:
             row = self.db.execute("SELECT updated FROM queries WHERE query=?", (query,)).fetchone()
             attempt = self.db.execute("SELECT attempted FROM refresh_attempts WHERE query=?", (query,)).fetchone()
             version = self.db.execute('SELECT result_revision,attempt_revision FROM search_cache_versions WHERE query=?', (query,)).fetchone()
         now = time.time()
+        # Keep serving the saved payload while freshness is checked separately.
+        # A code revision invalidates freshness without deleting useful results.
         stale = not row or row[0] <= now-self.refresh_seconds or not version or version[0] != self.revision
         retry_allowed = not attempt or not version or version[1] != self.revision or attempt[0] <= now-60
         return stale and retry_allowed
 
     def mark_refresh(self, query):
+        """Persist the refresh attempt time and revision before starting provider work."""
         with self.lock, self.db:
             self.db.execute("INSERT OR REPLACE INTO refresh_attempts VALUES (?, ?)",
                             (normalize_query(query), time.time()))

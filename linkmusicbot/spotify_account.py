@@ -28,6 +28,7 @@ class NotConnected(AccountError):
 
 class SpotifyAccount:
     def __init__(self, client_id, redirect_uri, encryption_key, path):
+        """Validate OAuth configuration and open encrypted account and pending-state storage."""
         uri = urlparse(redirect_uri)
         if (not client_id or uri.path != '/spotify/callback' or uri.query or uri.fragment
                 or uri.username or uri.password or not uri.hostname
@@ -46,15 +47,18 @@ class SpotifyAccount:
         self.db.commit()
 
     def _encrypt(self, value):
+        """Serialize and encrypt a stored OAuth value with the configured Fernet key."""
         return self.cipher.encrypt(json.dumps(value).encode())
 
     def _decrypt(self, value):
+        """Decrypt a stored OAuth value or request reconnection if it cannot be read."""
         try:
             return json.loads(self.cipher.decrypt(value))
         except (InvalidToken, ValueError):
             raise AccountError('Stored credentials cannot be read; reconnect Spotify.') from None
 
     def begin(self, user):
+        """Create a short-lived, user-bound PKCE authorization URL with single-use state."""
         state, verifier = random.token_urlsafe(32), random.token_urlsafe(64)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
         with self.lock, self.db:
@@ -69,6 +73,7 @@ class SpotifyAccount:
     @staticmethod
     def _request(method, url, **kwargs):
         # Endpoints are constants in this module; do not forward browser-supplied URLs.
+        """Call a fixed Spotify endpoint with bounded response size and sanitized errors."""
         try:
             with requests.Session() as session:
                 session.trust_env = False
@@ -87,6 +92,7 @@ class SpotifyAccount:
             raise AccountError('Spotify is temporarily unavailable.') from None
 
     def _save(self, user, token, previous=None):
+        """Validate playback scope and persist encrypted access and refresh tokens."""
         previous = previous or {}
         if not isinstance(token.get('access_token'), str) or not token['access_token']:
             raise AccountError('Spotify authorization failed.')
@@ -102,10 +108,12 @@ class SpotifyAccount:
 
     def complete(self, state, code=None, denied=False):
         # Serialize disconnect/new-login with an in-flight token exchange.
+        """Serialize OAuth completion against disconnects and competing logins."""
         with self.lock:
             return self._complete(state, code, denied)
 
     def _complete(self, state, code=None, denied=False):
+        """Consume and validate OAuth state before exchanging the code and saving tokens."""
         if not isinstance(state, str) or not 20 <= len(state) <= 128:
             raise AccountError('Invalid or expired authorization link.')
         with self.lock, self.db:
@@ -125,11 +133,13 @@ class SpotifyAccount:
         self._save(row[0], token)
 
     def disconnect(self, user):
+        """Delete the user's account tokens and any unfinished authorization states."""
         with self.lock, self.db:
             self.db.execute('DELETE FROM accounts WHERE user=?', (user,))
             self.db.execute('DELETE FROM states WHERE user=?', (user,))
 
     def _refresh(self, user, token):
+        """Refresh an access token and remove the account if Spotify revoked the grant."""
         status, payload = self._request('POST', 'https://accounts.spotify.com/api/token', data={
             'grant_type': 'refresh_token', 'refresh_token': token['refresh_token'], 'client_id': self.client_id,
         })
@@ -141,6 +151,7 @@ class SpotifyAccount:
         return self._save(user, payload, token)
 
     def current(self, user):
+        """Read the current track, refreshing expired tokens and retrying one unauthorized response."""
         with self.lock:
             row = self.db.execute('SELECT token FROM accounts WHERE user=?', (user,)).fetchone()
             if not row:
@@ -176,4 +187,5 @@ class SpotifyAccount:
         return song
 
     def close(self):
+        """Close the private Spotify account database."""
         self.db.close()

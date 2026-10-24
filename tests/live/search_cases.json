@@ -1,4 +1,7 @@
 [
+  {"title":"Цвет настроения синий","artist":"Филипп Киркоров","duration_ms":202540,"platforms":["apple","spotify","yandex","youtube"]},
+  {"title":"Романы","artist":"Филипп Киркоров","platforms":["apple","spotify","yandex","youtube"]},
+  {"title":"Стеснение пропало","artist":"Филипп Киркоров","platforms":["apple","spotify","yandex"]},
   {"title":"I I I","artist":"宝鐘マリン & Kobo Kanaeru","duration_ms":185876,"isrc":"JPV752408570","platforms":["apple","spotify","youtube"],"source_url":"https://music.youtube.com/watch?v=V6a1pbqlXVw"},
   {"title":"Cry For Me - Shirobeats, Kiwwi Remix","artist":"Ironmouse & HalaCG & Bubi & Kiwwi & shirobeats","platforms":["apple"]},
   {"title":"О нет","artist":"Бесплатный Автобус","platforms":["youtube"]},

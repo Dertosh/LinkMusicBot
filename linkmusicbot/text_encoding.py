@@ -3,6 +3,7 @@ import re
 
 
 def repair_text(value):
+    """Repair recoverable mojibake tokens while preserving valid Unicode text."""
     def repair_token(token):
         for _ in range(2):
             if not any(marker in token for marker in ("Ã", "Â", "Å", "Ð", "Ñ", "â", "ã", "å", "æ", "ð", "ç", "è", "é", "ä")):

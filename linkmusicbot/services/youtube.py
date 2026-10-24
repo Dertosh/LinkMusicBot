@@ -82,6 +82,7 @@ class YouTube(ServiceHandler):
         return response
 
     def _record_quota_error(self, url, payload):
+        """Persist an appropriate cooldown after a provider-reported search quota error."""
         if url != self._SEARCH_PATH:
             return
         reasons = {error.get("reason") for error in payload.get("error", {}).get("errors", [])}
@@ -90,24 +91,29 @@ class YouTube(ServiceHandler):
 
     @staticmethod
     def _quota_error(response):
+        """Recognize API quota and rate-limit errors in a YouTube response."""
         return any(error.get("reason") in {
             "quotaExceeded", "dailyLimitExceeded", "rateLimitExceeded", "userRateLimitExceeded"
         } for error in response.get("error", {}).get("errors", []))
 
     @staticmethod
     def _search_url(query):
+        """Build an explicit public YouTube search URL."""
         return "https://www.youtube.com/results?" + urlencode({"search_query": query})
 
     def _quota_fallback(self, query):
+        """Try public search when API quota is unavailable and retain a search URL on failure."""
         try:
             return first_video(query)
         except Exception:
             return self._search_url(query)
 
     def album_to_link(self, album):
+        """Return a YouTube search URL for the requested full album."""
         return self._search_url(self._format_album_query(album))
 
     def _metadata_snippets(self, identifiers):
+        """Batch-read up to fifty validated video IDs with snippet and duration metadata."""
         identifiers = list(dict.fromkeys(identifier for identifier in identifiers
                                          if isinstance(identifier, str) and re.fullmatch(r'[A-Za-z0-9_-]{11}', identifier)))[:50]
         if not identifiers:
@@ -125,6 +131,7 @@ class YouTube(ServiceHandler):
             return {}
 
     def _enrich_music_songs(self, songs):
+        """Use Topic metadata to recover complete performer credits for music candidates."""
         identifiers = [parse_qs(urlparse(getattr(s, 'service_links', {}).get('YouTube', '')).query).get('v', [''])[0] for s in songs]
         metadata = self._metadata_snippets(identifiers)
         for song, identifier in zip(songs, identifiers):
@@ -142,6 +149,7 @@ class YouTube(ServiceHandler):
             yield song
 
     def search(self, query, n=2):
+        """Yield music candidates using Data API search or public music search on quota exhaustion."""
         try:
             response = self._get(self._SEARCH_PATH, {
                 "part": "snippet", "maxResults": n, "q": query,
@@ -284,6 +292,7 @@ class YouTube(ServiceHandler):
 
     @staticmethod
     def _music_recording(identifier):
+        """Read official music metadata for exactly the requested video ID."""
         try:
             music = video_music_metadata(identifier)
             if not music:
@@ -328,6 +337,7 @@ class YouTube(ServiceHandler):
 
     @staticmethod
     def _duration_ms(value):
+        """Parse an ISO 8601 video duration into milliseconds when supported."""
         match = re.fullmatch(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?', value)
         if match:
             hours,minutes,seconds = (float(v or 0) for v in match.groups())
@@ -336,6 +346,7 @@ class YouTube(ServiceHandler):
 
     @staticmethod
     def _artwork(song, snippet):
+        """Attach duration and the largest safe YouTube thumbnail from a snippet."""
         if snippet.get('_duration_ms'):
             song.duration_ms = snippet['_duration_ms']
         images = snippet.get("thumbnails", {})
@@ -347,11 +358,13 @@ class YouTube(ServiceHandler):
 
     @staticmethod
     def _snippet_song(snippet):
+        """Extract recording identity only when snippet credits establish the performer."""
         title = unescape(snippet.get("title", ""))
         channel = unescape(snippet.get("channelTitle", ""))
         if re.search(r'\bteaser\b|#shorts\b|\bOUT NOW\b|YouTube Music Weekend|全\d+曲|\b(?:interview|podcast|vlog|livestream)\b|\b(?:интервью|подкаст|стрим)\b', title, re.I):
             return None
         title = re.sub(r'\s*\(Prod(?:uced)?\.?\s+[^)]+\)', '', title, flags=re.I)
+        title = re.sub(r'\s*[\(\[]премьера\s+клипа(?:\s+\d{4})?[\)\]]\s*$', '', title, flags=re.I)
         title = re.sub(r'\s+/\s+.+\s+(?:OP|ED|Opening|Ending)\s*$', '', title, flags=re.I)
         remix_cover = re.fullmatch(r'.+?\s+[-–—]\s+(.+?)\s*\(([^()]+?)\s+Cover Remix\)(?:\s+.+?\s*\[AMV\])?', title, flags=re.I)
         if remix_cover and normalized(remix_cover.group(2)) == normalized(channel.split(' - ')[0]):
@@ -407,6 +420,25 @@ class YouTube(ServiceHandler):
         return None
 
     def song_to_link(self, song):
+        # Official video metadata identifies the recording even when its intro
+        # or credits make the clip longer than the catalogue audio track.
+        """Prefer a matching official clip, then try verified audio and explicit search fallback."""
+        try:
+            videos = search_music(recording_query(song), 10, prefer_videos=True)
+            identifiers = [parse_qs(urlparse(c.service_links['YouTube']).query).get('v', [''])[0]
+                           for c in videos if getattr(c, 'video_type', None) == 'MUSIC_VIDEO_TYPE_OMV']
+            snippets = self._metadata_snippets(identifiers) if identifiers else {}
+            for candidate in videos:
+                identifier = parse_qs(urlparse(candidate.service_links['YouTube']).query).get('v', [''])[0]
+                label = snippets.get(identifier, {}).get('title', '')
+                # YouTube Music also labels official audio uploads as OMV.
+                if re.search(r'\b(?:official\s+audio|lyric(?:s)?\s+video|visualizer|live|concert)\b|официальное\s+аудио|концерт', label, re.I):
+                    continue
+                if (getattr(candidate, 'video_type', None) == 'MUSIC_VIDEO_TYPE_OMV'
+                        and same_recording(song, candidate.title, candidate.artist)):
+                    return candidate.service_links['YouTube']
+        except Exception:
+            pass
         query = self._format_song_query(song)
         try:
             response = self._get(self._SEARCH_PATH, {

@@ -6,6 +6,7 @@ from .spotify_account import AccountError
 
 
 def start_callback(account, host='0.0.0.0', port=8080):
+    """Start the OAuth callback HTTP server and return its lifecycle handle."""
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()

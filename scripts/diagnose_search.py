@@ -13,10 +13,12 @@ sys.path.insert(0, str(ROOT))
 
 
 def is_direct(url):
+    """Distinguish track or video URLs from explicit provider search URLs."""
     return not any(part in urlparse(url).path.split('/') for part in ('search', 'results'))
 
 
 def main():
+    """Run explicitly requested live diagnostics and write sanitized results to JSON."""
     parser = argparse.ArgumentParser(description='Run live music lookup checks without Telegram or SSH.')
     parser.add_argument('--cases', type=Path, default=ROOT / 'tests/live/search_cases.json')
     parser.add_argument('--title', help='Check a custom song instead of the fixture cases')

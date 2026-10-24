@@ -7,6 +7,7 @@ from contextvars import ContextVar, copy_context
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
+from urllib.parse import urlparse
 from threading import BoundedSemaphore
 from collections import OrderedDict
 
@@ -38,6 +39,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
     def _parallel_services(services, operation):
         # Copy the caller's absolute deadline and cache-refresh context into
         # every worker. Gather in provider order, independent of completion.
+        """Run provider jobs concurrently with copied deadlines and stable result order."""
         if not services:
             return []
         def run(service):
@@ -57,11 +59,13 @@ class LinkMusicBot(ProgressiveInlineMixin):
 
     @staticmethod
     def service_button(name, link):
+        """Build a service button, converting YouTube URLs to YouTube Music URLs."""
         if name == "YouTube":
             link = youtube_music_url(link)
         return InlineKeyboardButton(name, url=link)
 
     def __init__(self, token):
+        """Initialize provider clients, persistent stores, limits, and Telegram handlers."""
         self._music_services = [AppleMusic(), YouTube(), Spotify(), YandexMusic()]
         self.search_service = self._music_services[0]
         self._guard = QueryGuard()
@@ -97,6 +101,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
         self.application.add_error_handler(self.error_handler)
 
     def make_iqr(self, item):
+        """Render a recording using verified links and resolve missing provider links."""
         rows = []
         known_links = {}
         library = getattr(self, '_library', None)
@@ -150,12 +155,14 @@ class LinkMusicBot(ProgressiveInlineMixin):
         return build_result(item, rows)
 
     def handle_link(self, link):
+        """Read the linked song or album and build its inline result."""
         for service in self._music_services:
             if service.can_handle_link(link):
                 return self.make_iqr(service.link_to_object(link))
         return None
 
     def _retain_direct_links(self, result, cached):
+        """Keep verified cached URLs when a fresh lookup falls back to search."""
         data = result.to_dict()
         old_links = {b.text: b.url for row in cached.reply_markup.inline_keyboard for b in row}
         for row in data.get("reply_markup", {}).get("inline_keyboard", []):
@@ -170,6 +177,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
         return InlineQueryResultArticle.de_json(data, None)
 
     def _link_results(self, query):
+        """Keep the linked recording first and append distinct search alternatives."""
         result = self.handle_link(query)
         if result is None:
             return []
@@ -186,6 +194,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
         return results[:50]
 
     def handle_search(self, query):
+        """Merge provider candidates and resolve missing links on the top three cards."""
         query = normalize_query(query)
         services = [self.search_service] + [
             service for name in ("Spotify", "Яндекс Музыка", "YouTube")
@@ -222,22 +231,23 @@ class LinkMusicBot(ProgressiveInlineMixin):
                     Song(item.title, item.artist, ""), "", "").service_links.get(source, ""))
                 found.append(item)
         ranked = rank_results(found, query)[:50]
-        # Yandex's track index can omit a release present in its artist
-        # catalogue. Enrich only the first three cards, not every result.
-        yandex = next((s for s in self._music_services if isinstance(s, YandexMusic)), None)
-        if yandex is not None:
+        # Resolve missing links with targeted lookups on the first three cards;
+        # broad provider searches can omit an otherwise available recording.
+        if ranked:
             def enrich(service):
                 for item in ranked[:3]:
                     link = item.service_links.get(service.service_name(), '')
-                    if link and '/search?' not in link:
+                    if link and not any(part in urlparse(link).path.split('/') for part in ('search', 'results')):
                         continue
                     try:
                         check_budget()
-                        item.service_links[service.service_name()] = service.song_to_link(deepcopy(item))
+                        resolved = service.song_to_link(deepcopy(item))
+                        if isinstance(resolved, str) and service.can_handle_link(resolved):
+                            item.service_links[service.service_name()] = resolved
                     except Exception:
                         # Keep the source card and explicit search on failure.
                         pass
-            self._parallel_services([yandex], enrich)
+            self._parallel_services(self._music_services, enrich)
         # Other buttons use proven merged links or explicit searches instead
         # of multiplying provider requests for every inline candidate.
         results = [self.make_iqr(item) for item in ranked]
@@ -259,6 +269,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
         return rank_results(results, query)[:50]
 
     def _schedule_refresh(self, query):
+        """Schedule one bounded background refresh while keeping an interactive slot free."""
         library = getattr(self, "_library", None)
         if not isinstance(library, LocalLibrary) or not library.needs_refresh(query):
             return
@@ -299,6 +310,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
         task.add_done_callback(self._refresh_tasks.discard)
 
     def _refresh_query(self, query):
+        """Requery providers without recycling cached links and retain nonempty results."""
         token = _RECHECKING_CACHE.set(True)
         try:
             with self._guard.query_lock(query), request_budget():
@@ -314,6 +326,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
             self._guard.put(query, results)
 
     def _build_results(self, query):
+        """Serve cached results or coalesce a new lookup for the normalized query."""
         query = normalize_query(query)
         cached = self._guard.get(query)
         if cached is not None and not self._needs_yandex(cached):
@@ -335,6 +348,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
             self._work_slots.release()
 
     def _convert_and_cache(self, query):
+        """Convert a new query and persist successful results for later reuse."""
         cached = self._guard.get(query)
         if cached is not None:
             if not self._needs_yandex(cached):
@@ -369,6 +383,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
         return results
 
     def _needs_yandex(self, results):
+        """Detect result pages whose Yandex buttons still contain search URLs."""
         if not any(isinstance(service, YandexMusic) for service in getattr(self, "_music_services", [])):
             return False
         return any(isinstance(result, InlineQueryResultArticle) and
@@ -376,6 +391,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
                    for result in results)
 
     async def inline_query_handler(self, update, context):
+        """Debounce input, serve a result page, and retry rejected media formats."""
         started = time.monotonic()
         inline_query = update.inline_query
         query = inline_query.query.strip()
@@ -468,9 +484,11 @@ class LinkMusicBot(ProgressiveInlineMixin):
             await inline_query.answer(text_page, cache_time=0, is_personal=True, **kwargs)
 
     async def chat_id_command(self, update, context):
+        """Reply with the current chat ID for storage configuration."""
         await update.effective_message.reply_text('ID чата: ' + str(update.effective_chat.id))
 
     async def message_handler(self, update, context):
+        """Explain inline music search in the user's language in private chats."""
         if getattr(context, 'args', None) == ['spotify']:
             await self.connect_spotify(update, context)
             return
@@ -499,9 +517,11 @@ class LinkMusicBot(ProgressiveInlineMixin):
 
     @staticmethod
     def _account_text(update, ru, en):
+        """Choose Russian or English account text from the Telegram user language."""
         return ru if (getattr(update.effective_user, 'language_code', '') or '').lower().startswith('ru') else en
 
     def _record_usage(self, user, kind):
+        """Record an allowed usage event without interrupting the user request on failure."""
         usage = getattr(self, '_usage', None)
         if usage is not None:
             try:
@@ -510,6 +530,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
                 logging.warning('Usage counter unavailable')
 
     async def connect_spotify(self, update, context):
+        """Send a private Spotify account authorization link when linking is configured."""
         self._record_usage(update.effective_user, 'connect')
         if update.effective_chat.type != 'private':
             await update.effective_message.reply_text(self._account_text(update, 'Подключайте Spotify в личном чате бота.', 'Connect Spotify in a private chat with the bot.'))
@@ -522,6 +543,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Spotify', url=url)]]))
 
     async def disconnect_spotify(self, update, context):
+        """Remove the user's stored Spotify credentials and pending authorization state."""
         self._record_usage(update.effective_user, 'disconnect')
         if update.effective_chat.type != 'private':
             await update.effective_message.reply_text(self._account_text(update, 'Отключайте аккаунт в личном чате бота.', 'Disconnect in a private chat with the bot.'))
@@ -531,6 +553,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
         await update.effective_message.reply_text(self._account_text(update, 'Аккаунт отключён, сохранённые токены удалены.', 'Account disconnected; stored tokens deleted.'))
 
     def _current_result(self, user):
+        """Build a result for the linked user's currently playing Spotify track."""
         if not self.spotify_account:
             raise NotConnected('Spotify authorization is not configured.')
         if not self._work_slots.acquire(blocking=False):
@@ -549,6 +572,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
             self._work_slots.release()
 
     async def current_command(self, update, context):
+        """Send the current Spotify track or an account error in a private chat."""
         self._record_usage(update.effective_user, 'current')
         try:
             result = await asyncio.to_thread(self._current_result, update.effective_user.id)
@@ -568,6 +592,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
                                                  link_preview_options=content.link_preview_options)
 
     async def current_inline(self, update, context):
+        """Return the user's current track without sharing it through Telegram caching."""
         inline = update.inline_query
         try:
             result = await asyncio.to_thread(self._current_result, inline.from_user.id)
@@ -584,6 +609,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
         await inline.answer([result], cache_time=0, is_personal=True)
 
     async def error_handler(self, update, context):
+        """Log the exception type without exposing credentials or request URLs."""
         error = context.error
         detail = str(error) if isinstance(error, BadRequest) else ""
         for value in secrets.values():
@@ -593,6 +619,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
         logging.warning("Telegram update failed: %s %s", type(error).__name__, detail[:200])
 
     def run(self):
+        """Run polling and close persistent stores and the optional callback server on exit."""
         server = None
         if self.spotify_account:
             from .spotify_callback import start_callback
@@ -612,6 +639,7 @@ class LinkMusicBot(ProgressiveInlineMixin):
 
 
 def main():
+    """Load the bot token and start Telegram polling."""
     logging.basicConfig(level=logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.CRITICAL)
     logging.getLogger("telegram").setLevel(logging.CRITICAL)

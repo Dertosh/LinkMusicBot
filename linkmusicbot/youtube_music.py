@@ -24,14 +24,16 @@ def video_music_metadata(identifier):
                  and track.get('title') and track.get('artists')), None)
 
 
-def search_music(query, limit=10):
+def search_music(query, limit=10, prefer_videos=False):
+    """Read public music search results with official type, artist, and duration metadata."""
     query = query.replace(' & ', ' ')
     check_budget()
     with requests.Session() as session:
         session.trust_env = False
         session.request = partial(session.request, timeout=3)
         client = YTMusic(requests_session=session)
-        data = client.search(query, limit=min(limit, 20), ignore_spelling=True)
+        options = {'filter': 'videos'} if prefer_videos else {}
+        data = client.search(query, limit=min(limit, 20), ignore_spelling=True, **options)
         # Some official top cards omit artists; resolve their public metadata.
         for entry in data:
             if (entry.get('videoType') == 'MUSIC_VIDEO_TYPE_OMV' and not entry.get('artists')
@@ -56,5 +58,13 @@ def search_music(query, limit=10):
         if song is None:
             song = Song(entry['title'], artist, (entry.get('album') or {}).get('name', ''))
         song.service_links = {'YouTube': 'https://www.youtube.com/watch?v=' + identifier}
-        candidates.append((entry.get('videoType') != 'MUSIC_VIDEO_TYPE_ATV', song))
+        song.video_type = entry.get('videoType')
+        length = str(entry.get('duration') or entry.get('length') or '')
+        if re.fullmatch(r'\d+:\d{2}(?::\d{2})?', length):
+            seconds = 0
+            for part in length.split(':'):
+                seconds = seconds * 60 + int(part)
+            song.duration_ms = seconds * 1000
+        preferred = 'MUSIC_VIDEO_TYPE_OMV' if prefer_videos else 'MUSIC_VIDEO_TYPE_ATV'
+        candidates.append((entry.get('videoType') != preferred, song))
     return [song for _, song in sorted(candidates, key=lambda item: item[0])][:limit]

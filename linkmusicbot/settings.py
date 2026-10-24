@@ -4,6 +4,7 @@ from importlib import import_module
 
 
 def load_settings():
+    """Merge local configuration and environment overrides with validated defaults."""
     try:
         settings = dict(import_module("config").secrets)
     except ModuleNotFoundError as error:

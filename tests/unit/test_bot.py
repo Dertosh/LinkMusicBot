@@ -13,6 +13,31 @@ from telegram.error import BadRequest
 
 
 class BotTests(unittest.TestCase):
+    def test_title_search_resolves_missing_links_on_every_platform(self):
+        services = []
+        for name, url in [('Apple Music', 'https://music.apple.com/us/song/1'),
+                          ('Spotify', 'https://open.spotify.com/track/1'),
+                          ('YouTube', 'https://www.youtube.com/watch?v=IAuzNXGmkL4'),
+                          ('Яндекс Музыка', 'https://music.yandex.ru/album/1/track/1')]:
+            service = MagicMock()
+            service.service_name.return_value = name
+            service.search.return_value = []
+            service.song_to_link.return_value = url
+            services.append(service)
+        song = Song('Цвет настроения синий', 'Philipp Kirkorov', '')
+        song.service_links = {'Spotify': services[1].song_to_link.return_value}
+        services[1].search.return_value = [song]
+        self.bot.search_service = services[0]
+        self.bot._music_services = services
+        self.bot.make_iqr = lambda item: item
+        results = self.bot.handle_search('Цвет настроения синий')
+        for service in services:
+            self.assertEqual(results[0].service_links[service.service_name()], service.song_to_link.return_value)
+        services[1].song_to_link.assert_not_called()
+        services[0].song_to_link.assert_called_once()
+        services[2].song_to_link.assert_called_once()
+        services[3].song_to_link.assert_called_once()
+
     def test_refresh_keeps_verified_direct_link_when_provider_falls_back(self):
         from linkmusicbot.presentation import build_result
         from telegram import InlineKeyboardButton

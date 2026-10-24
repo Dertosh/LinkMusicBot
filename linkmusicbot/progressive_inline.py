@@ -17,6 +17,7 @@ from .cover_photos import message_text
 
 class ProgressiveInlineMixin:
     def _progressive_state(self):
+        """Initialize job indexes and expire completed jobs after their retention period."""
         if not hasattr(self, '_link_jobs'):
             self._link_jobs = {}
             self._link_queries = {}
@@ -28,6 +29,7 @@ class ProgressiveInlineMixin:
                     self._link_queries.pop(job['query'], None)
 
     def _progressive_card(self, job):
+        """Build a current snapshot of source links, resolved platforms, and loading state."""
         rows = [[self.service_button(s.service_name(), job['links'][s.service_name()])]
                 for s in self._music_services if s.service_name() in job['links']]
         result = build_result(job['song'], rows)
@@ -45,6 +47,7 @@ class ProgressiveInlineMixin:
             input_message_content=content, reply_markup=result.reply_markup)
 
     async def _progressive_results(self, query, user):
+        """Read a supported source URL and start or reuse a background resolution job."""
         self._progressive_state()
         query = normalize_query(query)
         identifier = self._link_queries.get(query)
@@ -91,6 +94,7 @@ class ProgressiveInlineMixin:
     async def _edit_progressive(self, job, message_id, retried=False):
         # Keep only a dirty flag, rather than queueing every intermediate edit.
         # The active writer drains the newest state after its current request.
+        """Coalesce concurrent edits for one message and drain the newest pending state."""
         lock = job.setdefault('edit_locks', {}).setdefault(message_id, asyncio.Lock())
         pending = job.setdefault('pending_edits', set())
         pending.add(message_id)
@@ -98,10 +102,13 @@ class ProgressiveInlineMixin:
             return
         async with lock:
             while message_id in pending:
+                # Clear before awaiting: arrivals during the HTTP request set
+                # the flag again and are collapsed into the next snapshot.
                 pending.discard(message_id)
                 await self._edit_progressive_locked(job, message_id, retried)
 
     async def _edit_progressive_locked(self, job, message_id, retried=False):
+        """Send a serialized snapshot with rate-limit and media-format recovery."""
         result = self._progressive_card(job)
         content = result.input_message_content
         try:
@@ -149,10 +156,12 @@ class ProgressiveInlineMixin:
             logging.warning('Progressive edit failed: %s', type(error).__name__)
 
     async def _publish_progressive(self, job):
+        """Update the messages subscribed to this lookup job."""
         for message_id in tuple(job['messages']):
             await self._edit_progressive(job, message_id)
 
     async def _complete_progressive(self, job):
+        """Resolve remaining providers in parallel, cache the final card, and publish it."""
         acquired = self._work_slots.acquire(blocking=False)
         tasks = []
         try:
@@ -195,6 +204,7 @@ class ProgressiveInlineMixin:
             await self._publish_progressive(job)
 
     async def chosen_inline_handler(self, update, context):
+        """Subscribe the selected inline message to its job and warm the cover cache."""
         chosen = update.chosen_inline_result
         is_photo = chosen.result_id.startswith('ph-')
         identifier = chosen.result_id[3:] if chosen.result_id.startswith(('ph-', 'tx-')) else chosen.result_id
@@ -228,6 +238,7 @@ class ProgressiveInlineMixin:
         await self._edit_progressive(job, chosen.inline_message_id)
 
     async def _cache_chosen_cover(self, identifier, query):
+        """Upload a selected cover to storage only when its reusable file ID is missing."""
         from .settings import secrets
         storage = secrets.get('cover_storage_chat_id')
         store = getattr(self, '_covers', None)
@@ -248,6 +259,7 @@ class ProgressiveInlineMixin:
                 logging.warning('Cover upload failed: %s', type(error).__name__)
 
     async def loading_callback(self, update, context):
+        """Refresh a subscribed card when selection feedback was missed."""
         callback = update.callback_query
         self._progressive_state()
         identifier = (callback.data or '').partition(':')[2]

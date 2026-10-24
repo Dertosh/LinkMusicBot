@@ -6,6 +6,7 @@ import sys
 
 
 def first_video(query):
+    """Read a public YouTube search page and return the first valid video URL."""
     process = subprocess.run([
         sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-plugin-dirs",
         "--flat-playlist", "--skip-download", "--no-warnings", "--no-progress", "--no-cache-dir",

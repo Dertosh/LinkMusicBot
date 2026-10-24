@@ -46,6 +46,7 @@ class AppleMusic(ServiceHandler):
 
     @staticmethod
     def _large_artwork(url):
+        """Request a larger cover image only for recognized Apple artwork CDN URLs."""
         parsed = urlparse(url)
         if not re.fullmatch(r"is[1-5]-ssl\.mzstatic\.com", parsed.hostname or ""):
             return url
@@ -118,10 +119,12 @@ class AppleMusic(ServiceHandler):
 
     @staticmethod
     def _artists(value):
+        """Read artist credits from an Apple Music item payload."""
         artists = value if isinstance(value, list) else [value]
         return " & ".join(unescape(artist["name"]) for artist in artists if artist)
 
     def _read_item(self, link, song):
+        """Read song or album metadata from a validated Apple Music URL."""
         if not self.can_handle_link(link):
             raise ValueError("Invalid Apple Music URL")
         page = BeautifulSoup(fetch_text(link, APPLE_HOSTS), "html.parser")
@@ -159,9 +162,11 @@ class AppleMusic(ServiceHandler):
         raise ValueError("Apple Music metadata not found")
 
     def link_to_album(self, link):
+        """Parse a validated Apple Music album link into an Album."""
         return self._read_item(link, song=False)
 
     def link_to_song(self, link):
+        """Parse a validated Apple Music song or album-track link into a Song."""
         return self._read_item(link, song=True)
 
     def search(self, query, n=5):

@@ -7,6 +7,7 @@ from linkmusicbot.about import DESCRIPTIONS, SHORT_DESCRIPTIONS
 
 
 async def main():
+    """Publish configured bot descriptions for the default, English, and Russian locales."""
     async with Bot(secrets["telegram_token"]) as bot:
         for language in ("", "en", "ru"):
             key = language or "en"

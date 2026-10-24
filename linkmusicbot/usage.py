@@ -8,6 +8,7 @@ import time
 
 class UsageStats:
     def __init__(self, path):
+        """Open private usage storage and create daily counters and user metadata tables."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.lock = Lock()
         self.db = sqlite3.connect(path, check_same_thread=False)
@@ -20,6 +21,7 @@ class UsageStats:
         ''')
 
     def record(self, user, kind):
+        """Increment an allowed daily event without storing search text or account tokens."""
         if kind not in {'inline','start','current','connect','disconnect'}:
             raise ValueError('Unknown usage event')
         now = time.time();day = datetime.fromtimestamp(now, timezone.utc).date().isoformat()
@@ -31,6 +33,7 @@ class UsageStats:
                             'DO UPDATE SET count=count+1',(day,user.id,kind))
 
     def report(self):
+        """Return aggregate usage and per-user request totals since recording started."""
         with self.lock:
             users=[{'telegram_id':r[0],'username':r[1],'requests':r[2]} for r in self.db.execute(
                 'SELECT u.id,u.username,SUM(d.count) FROM users u JOIN daily d ON d.user=u.id '
@@ -41,4 +44,5 @@ class UsageStats:
                 'unique_users':len(users),'events':counts,'users':users}
 
     def close(self):
+        """Close the usage statistics database."""
         self.db.close()

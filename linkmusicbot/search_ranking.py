@@ -12,10 +12,12 @@ VERSION = re.compile(r"\b(?:remix|mix|edit|live|acoustic|instrumental|karaoke|co
 
 
 def _normalized(value):
+    """Build a compact comparison key using query cleanup and verified spelling aliases."""
     return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", alias_text(clean_query(value))).casefold())
 
 
 def search_rank(title, query):
+    """Rank title relevance and prefer original versions unless a version was requested."""
     requested = VERSION.search(query)
     version = VERSION.search(title)
     base = re.sub(r"[\(\[]([^\)\]]*)[\)\]]",
@@ -36,6 +38,7 @@ def search_rank(title, query):
 
 
 def rank_results(results, query):
+    """Order search candidates by relevance, artist match, version, and verified links."""
     if "://" in query:
         return results
     def rank(item):
@@ -52,6 +55,7 @@ def rank_results(results, query):
 
 
 def query_matches(title, artist, query):
+    """Require each query token to match title or performer words across supported scripts."""
     def words(value, aliases=True):
         value = clean_query(value)
         value = unicodedata.normalize("NFKD", alias_text(value) if aliases else unescape(value)).casefold()

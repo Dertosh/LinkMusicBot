@@ -14,19 +14,24 @@ YANDEX_HOSTS = {"music.yandex.ru", "music.yandex.com", "music.yandex.by", "music
 
 class YandexMusic(ServiceHandler):
     def __init__(self):
+        """Initialize the public Yandex Music client."""
         self._retry_after = 0
 
     @staticmethod
     def service_name():
+        """Return the display name used for Yandex Music buttons and source links."""
         return "Яндекс Музыка"
 
     def can_handle_link(self, link):
+        """Check whether a URL belongs to a supported Yandex Music host."""
         return valid_url(link, YANDEX_HOSTS)
 
     def link_is_song(self, link):
+        """Distinguish track links from album links by their URL path."""
         return "/track/" in urlparse(link).path
 
     def _get(self, path, params=None):
+        """Read a public Yandex endpoint and validate the response envelope."""
         check_budget()
         if time.monotonic() < self._retry_after:
             raise ValueError("Yandex metadata temporarily unavailable")
@@ -42,6 +47,7 @@ class YandexMusic(ServiceHandler):
 
     @staticmethod
     def _id(value):
+        """Validate and normalize a numeric Yandex resource identifier."""
         value = str(value)
         if not re.fullmatch(r"[0-9]+", value):
             raise ValueError("Invalid Yandex ID")
@@ -49,9 +55,11 @@ class YandexMusic(ServiceHandler):
 
     @staticmethod
     def _artists(data):
+        """Combine performer names from Yandex artist credits."""
         return " & ".join(artist["name"] for artist in data.get("artists", []))
 
     def _song(self, data):
+        """Convert a Yandex track payload into a Song with recording metadata."""
         albums = data.get("albums", [])
         title = data["title"]
         if data.get("version"):
@@ -66,17 +74,20 @@ class YandexMusic(ServiceHandler):
 
     @staticmethod
     def _cover(item, uri):
+        """Attach a safe cover URL expanded from the Yandex cover URI template."""
         if isinstance(uri, str):
             link = (uri if uri.startswith("https://") else "https://" + uri).replace("%%", "600x600")
             if valid_url(link, {"avatars.yandex.net", "avatars.mds.yandex.net"}):
                 item.cover_art = {"url": link}
 
     def _album(self, data):
+        """Convert a Yandex album payload into an Album."""
         album = Album(data["title"], self._artists(data))
         self._cover(album, data.get("coverUri"))
         return search_links(album, self.service_name(), "https://music.yandex.ru/album/" + self._id(data["id"]))
 
     def link_to_song(self, link):
+        """Load track metadata from a validated Yandex song URL."""
         if not self.can_handle_link(link):
             raise ValueError("Invalid Yandex Music URL")
         match = re.fullmatch(r"/(?:album/[0-9]+/)?track/([0-9]+)/?", urlparse(link).path)
@@ -90,6 +101,7 @@ class YandexMusic(ServiceHandler):
         return song
 
     def link_to_album(self, link):
+        """Load album metadata from a validated Yandex album URL."""
         if not self.can_handle_link(link):
             raise ValueError("Invalid Yandex Music URL")
         match = re.fullmatch(r"/album/([0-9]+)/?", urlparse(link).path)
@@ -100,6 +112,7 @@ class YandexMusic(ServiceHandler):
         return album
 
     def search(self, query, n=2):
+        """Yield available track candidates from the public Yandex search endpoint."""
         result = self._get("/search", {"text": query, "type": "track", "page": 0})
         for data in result.get("tracks", {}).get("results", [])[:n]:
             if data.get("available", True):
@@ -107,13 +120,16 @@ class YandexMusic(ServiceHandler):
 
     @staticmethod
     def search_url(query):
+        """Build an explicit Yandex search fallback URL."""
         return "https://music.yandex.ru/search?" + urlencode({"text": query})
 
     @staticmethod
     def _normalized(value):
+        """Build the normalized comparison key used for Yandex item ranking."""
         return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", value).casefold())
 
     def _same_item(self, expected, actual):
+        """Check the expected item's title, performers, and available recording metadata."""
         def matching_title(title):
             # Yandex puts editorial Eurovision notes in the version field.
             # Do not remove musical versions such as remix/live/video version.
@@ -126,6 +142,7 @@ class YandexMusic(ServiceHandler):
                               duration_ms=getattr(actual, 'duration_ms', None), isrc=getattr(actual, 'isrc', None))
 
     def song_to_link(self, song):
+        """Find a verified track through search variants and a bounded artist catalogue fallback."""
         term = recording_query(song)
         plain_term = re.sub(r"\s*(?:\(|-\s*)(?:russian|english|japanese)\s*(?:ver\.?|version)\)?", "", term, flags=re.I)
         try:
@@ -164,6 +181,7 @@ class YandexMusic(ServiceHandler):
         return self.search_url(term)
 
     def album_to_link(self, album):
+        """Find a matching Yandex album or return an explicit search fallback."""
         term = f"{album.title} {album.artist}"
         try:
             matches = self._get("/search", {"text": term, "type": "album", "page": 0})

@@ -19,10 +19,12 @@ from ..query_text import clean_query, alias_text
 
 
 def normalized(value):
+    """Build a case- and punctuation-insensitive Unicode comparison key."""
     return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", unescape(value or "")).casefold())
 
 
 def query_variants(query):
+    """Generate cleaned, aliased, and transliterated forms of a search query."""
     query = clean_query(query)
     variants = [query]
     plain = unescape(query).replace("’", "").replace("'", "")
@@ -89,6 +91,7 @@ def recording_identity(title, artist):
 
 
 def compare_recordings(item, title, artist, *, duration_ms=None, isrc=None):
+    """Compare recording identity and metadata while preserving language and version conflicts."""
     expected_title, expected_artists = recording_identity(item.title, item.artist)
     actual_title, actual_artists = recording_identity(title, artist)
     pattern = r"\s*(?:\(|-\s*)(russian|english|japanese|русская|английская)\s*(?:ver\.?|version|версия)\)?"
@@ -112,10 +115,12 @@ def compare_recordings(item, title, artist, *, duration_ms=None, isrc=None):
 
 
 def same_recording(item, title, artist, *, duration_ms=None, isrc=None):
+    """Return whether the available evidence establishes a matching recording."""
     return compare_recordings(item, title, artist, duration_ms=duration_ms, isrc=isrc).status == 'match'
 
 
 def recording_query(item):
+    """Combine normalized title and explicit performer credits for provider searches."""
     guests = re.findall(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+([^\)\]]+)[\)\]]",
                         item.title, flags=re.I)
     guests.extend(re.findall(r'\s+(?:feat\.?|ft\.?|featuring)\s+(.+?)(?=\s+[-–—]\s+|$)', item.title, flags=re.I))
@@ -124,6 +129,7 @@ def recording_query(item):
 
 
 def search_links(item, source, link):
+    """Fill explicit search URLs for all platforms and retain the supplied source URL."""
     term = f"{item.title} {item.artist}".strip()
     item.service_links = {
         "Apple Music": "https://music.apple.com/us/search?" + urlencode({"term": term}),

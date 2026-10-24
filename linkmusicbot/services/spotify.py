@@ -48,6 +48,7 @@ class Spotify(ServiceHandler):
         return "{} {}".format(re.sub(self._PARENS_PATTERN, "", item.title), item.artist)
 
     def search(self, query, n=2):
+        """Yield catalogue tracks with credits, duration, artwork, and their Spotify source URLs."""
         check_budget()
         response = self._spotify.search(query, type="track", limit=n)
         for track in response["tracks"]["items"][:n]:
@@ -62,6 +63,7 @@ class Spotify(ServiceHandler):
 
     @staticmethod
     def _validated_id(link, kind):
+        """Validate a Spotify URL and extract the requested resource identifier."""
         if not valid_url(link, {"open.spotify.com"}):
             raise ValueError("Invalid Spotify URL")
         match = re.fullmatch(r"/" + kind + r"/([A-Za-z0-9]{22})/?", urlparse(link).path)
@@ -70,6 +72,7 @@ class Spotify(ServiceHandler):
         return match.group(1)
 
     def _matched_link(self, item, kind):
+        """Try bounded query variants and return the highest-scoring verified recording URL."""
         queries = [self._format_query(item), *query_variants(self._naive_query(item)), item.title]
         for query in dict.fromkeys(queries):
             check_budget()
@@ -90,6 +93,7 @@ class Spotify(ServiceHandler):
         raise ValueError("No matching Spotify recording")
 
     def album_to_link(self, album):
+        """Find the matching Spotify album using the shared catalogue matcher."""
         return self._matched_link(album, "album")
 
     def can_handle_link(self, link):
@@ -122,4 +126,5 @@ class Spotify(ServiceHandler):
         return item
 
     def song_to_link(self, song):
+        """Find a Spotify track using verified recording metadata."""
         return self._matched_link(song, "track")

@@ -5,6 +5,7 @@ from html import unescape
 
 
 def clean_query(value):
+    """Remove search decoration and normalize spacing while preserving version markers."""
     value = unescape(value)
     value = re.sub(r"\b(?:official\s+)?(?:music\s+clip|music\s+video|lyrics?\s+video)\b", "", value, flags=re.I)
     value = re.sub(r"ляшки\s*такие\s*вкусня", "ляшкивкусня", value, flags=re.I)
@@ -13,7 +14,9 @@ def clean_query(value):
 
 
 def alias_text(value):
+    """Normalize explicitly verified artist and title spelling equivalents."""
     value = unicodedata.normalize("NFKC", unescape(value)).casefold()
+    value = re.sub(r'(?<!\w)(?:филипп\s+киркоров|(?:philipp|filipp)\s+kirkorov)(?!\w)', 'philipp kirkorov', value)
     # The same artist is credited in English on Apple and Russian on Spotify.
     value = re.sub(r'(?<!\w)(?:женя\s+любич|(?:jenia|zhenya|zhenia)\s+lubich)(?!\w)', 'jenia lubich', value)
     value = value.replace("'", "").replace("’", "").replace("`", "")

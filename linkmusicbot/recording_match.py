@@ -9,17 +9,20 @@ from anyascii import anyascii
 
 
 def romanized(value):
+    """Transliterate Unicode text into normalized ASCII without changing recording versions."""
     return ' '.join(anyascii(unicodedata.normalize('NFKC', unescape(value or ''))).split())
 
 
 def romanized_variants(value):
     # Both i and y are used for Cyrillic й in real catalogue spellings.
+    """Return supported ASCII spellings, including both common Cyrillic й transliterations."""
     original = romanized(value)
     alternative = romanized(re.sub('й', 'y', value or '', flags=re.I))
     return list(dict.fromkeys([original, alternative]))
 
 
 def words(value, transliterate=False):
+    """Extract comparison tokens, optionally transliterating them first."""
     value = unicodedata.normalize('NFKC', unescape(value or '')).casefold()
     if transliterate:
         value = romanized(value).casefold()
@@ -27,10 +30,12 @@ def words(value, transliterate=False):
 
 
 def compact(value, transliterate=False):
+    """Join comparison tokens into a punctuation-insensitive identity string."""
     return ''.join(words(value, transliterate))
 
 
 def artist_signatures(artists):
+    """Build performer multisets for the supported transliteration variants."""
     variants = [romanized_variants(a) for a in artists]
     return [Counter(compact(v[index]) for v in variants) for index in (0, -1)]
 
@@ -51,6 +56,7 @@ class RecordingMatch:
 
 def evaluate(expected_title, actual_title, expected_artists, actual_artists, timing=None,
              source_isrc=None, actual_isrc=None):
+    """Assess title, performer, duration, ISRC, and version evidence without guessing confidence."""
     native_exact = bool(compact(expected_title)) and compact(expected_title) == compact(actual_title)
     left, right = words(expected_title), words(actual_title)
     left_ascii, right_ascii = words(expected_title, True), words(actual_title, True)

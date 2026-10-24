@@ -6,6 +6,7 @@ from .security import valid_url
 
 
 def build_result(item, rows):
+    """Build a canonical text article with safe artwork and the supplied service buttons."""
     markup = InlineKeyboardMarkup(rows)
     title = item.title[:256]
     description = item.artist[:256]

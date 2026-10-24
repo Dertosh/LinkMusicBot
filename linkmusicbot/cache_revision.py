@@ -7,6 +7,7 @@ from .settings import secrets
 
 @lru_cache(maxsize=1)
 def search_revision():
+    """Hash search sources and matching settings to invalidate stale cached snapshots."""
     root = Path(__file__).parent
     files = [root / name for name in (
         'bot.py', 'library.py', 'query_text.py', 'recording_match.py', 'search_ranking.py',
